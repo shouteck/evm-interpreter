@@ -27,6 +27,7 @@ enable_testing()
 add_executable(evm_tests
     tests/test_main.cpp
     tests/test_smoke.cpp
+    tests/test_uint256.cpp
 )
 target_link_libraries(evm_tests PRIVATE evm)
 add_test(NAME evm_tests COMMAND evm_tests)
