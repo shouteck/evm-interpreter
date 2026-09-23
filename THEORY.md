@@ -1,258 +1,346 @@
 # The Clerk's Arithmetic Manual
 
-How the clerk in the office does math on numbers too big for its head.
-Everything below is one idea repeated: **a giant number written as four
-smaller chunks, and school rules applied chunk by chunk.**
+*How to do math on numbers too big to hold in your head —
+by picturing machines you can hold in your head.*
 
-## 0. The worksheet
+## The machine: a four-wheel odometer
 
-Every sheet of paper on the clerk's desk holds a 256-bit number. The
-clerk's brain holds 64 bits at a time, so each number is written as
-FOUR chunks of 64 bits:
+Forget bits for a moment. Picture the thing in your car that counts
+miles: a row of wheels, each wheel marked 0 through 9, and when a wheel
+rolls past 9 it snaps back to 0 and clicks the wheel to its left forward
+one notch. That's mechanical addition — nobody thinks, the wheels do it.
 
-```
-        l[3]        l[2]        l[1]        l[0]
-    +-----------+-----------+-----------+-----------+
-    |  big end  |           |           | small end |
-    +-----------+-----------+-----------+-----------+
+Our clerk works with the same machine, except:
 
-    value = l[3]*B^3 + l[2]*B^2 + l[1]*B + l[0]      where B = 2^64
-```
-
-Each chunk is a "digit" in base 2^64. Just like 4702 means
-4*10^3 + 7*10^2 + 0*10 + 2, except our digits go up to ~1.8 * 10^19.
-
-THE ONE RULE OF THE ROOM: the page is a ring. Arithmetic wraps mod 2^256.
-Anything that falls off the left edge is gone. MAX + 1 = 0.
-
-## 1. Comparing  (<  <=  >  >=)
-
-Idea: most significant chunk wins. Scan from l[3] down; the first chunk
-that differs decides. Like comparing 4700 vs 4699 — the hundreds digit
-settles it, you never look at the rest.
+- each wheel has **2^64 positions** instead of 10 (about 1.8 x 10^19 —
+  a wheel with more markings than there are grains of sand on Earth), and
+- there are exactly **four wheels**.
 
 ```
-    a:   [0] [0] [5] [9]
-    b:   [0] [0] [7] [1]
-                  ^
-    l[3]: 0 == 0   tie
-    l[2]: 0 == 0   tie
-    l[1]: 5 <  7   DECIDED -> a < b   (l[0] never consulted)
+        wheel 3     wheel 2     wheel 1     wheel 0
+        +-----+     +-----+     +-----+     +-----+
+        | 042 |     | 917 |     | 551 |     | 333 |
+        +-----+     +-----+     +-----+     +-----+
+         big end                              small end
+
+    the number = w3*B^3 + w2*B^2 + w1*B + w0     where B = 2^64
 ```
 
-Walkthrough: compare U(5,0,1,0) vs U(5,0,2,0) -> l[3], l[2] tie, l[1]
-differs, 1 < 2 -> a < b. Done.
+Each wheel is one `uint64_t` — one limb. Wheel 0 is the "ones" wheel.
 
-The family trick: write < once. > is b < a. <= is !(b < a). >= is
-!(a < b). One real algorithm, three one-liners.
+**The one rule of the room:** there is no fifth wheel. Whatever would
+have gone on wheel 4 just doesn't happen — the odometer rolls back to
+zero and keeps going. Biggest possible reading plus one tick = all
+zeros. Mathematicians call this *mod 2^256*; a mechanic calls it
+*rolling the odometer*. Every operation below is a consequence of this
+one picture.
 
-## 2. Adding  (+)
+## Adding: turn the wheels
 
-Idea: column addition. Add chunk by chunk starting at l[0]; when a
-column overflows past 64 bits, carry a 1 into the next column.
-
-The trick for detecting a carry: an unsigned add that overflows WRAPS,
-so the result comes out smaller than what you added:
-
-```
-    s = x + y;   carry happened iff   s < x     (sum wrapped past 2^64)
-```
-
-Walkthrough: U(M, 0, 0, 0) + 1   (M = all-ones chunk)
+To add two numbers you add the wheels pairwise, right to left, and every
+time a wheel rolls past its top it clicks the next wheel forward.
 
 ```
-    l[0]:  M + 1 = 0   (wrapped!)  carry = 1   because 0 < M
-    l[1]:  0 + 0 + 1 = 1           carry = 0
-    l[2], l[3]: 0
-    ->  U(0, 1, 0, 0)  =  2^64   [checkmark]
+    wheel 0:   a0 + b0
+                  |
+                  +-- did it roll past max? -> click a 1 into wheel 1
 ```
 
-The carry out of l[3] falls off the page -- that IS mod 2^256.
+How do you *detect* the click? When a wheel wraps, its new position is
+**lower than what you added** — you added 5 and now it reads 2? It must
+have gone all the way around. In code: `sum < a` means "it wrapped."
 
-## 3. Subtracting  (-)
-
-Idea: same dance, borrows instead of carries. a - b underflows a chunk
-when a < b -- and wrapping means the machine borrows +2^64 for free
-(you just owe the next chunk 1).
+Walkthrough — `U(M, 0, 0, 0) + 1` (wheel 0 maxed out, M = 2^64 - 1):
 
 ```
-    s = a.l[i] - borrow;         // paying last column's debt
-    c  = (a.l[i] < borrow);      // did paying the debt underflow?
-    c |= (s < b.l[i]);           // did subtracting b underflow?
-    s -= b.l[i];
-    borrow = c;                  // pass the debt upward
+    wheel 0:  M + 1  ->  0, CLICK      (it read M, we added 1, now 0)
+    wheel 1:  0 + 0 + click  ->  1
+    wheels 2,3: unchanged
+
+    result: U(0, 1, 0, 0) = 2^64   [checkmark]
 ```
 
-Walkthrough: U(0, 1, 0, 0) - 1  (2^64 - 1)
+<!-- diagram:carry -->
+
+The click out of wheel 3 has nowhere to go — the odometer rolls over.
+That's the whole implementation: 4 adds, 3 carries, one forgiven drop.
+
+## Subtracting: wind backwards
+
+Subtraction is the same machine wound the other way. When a wheel needs
+to go below 0 it can't — so it borrows a full turn from the wheel to
+its left: the left wheel winds back one notch, the right wheel wraps
+around to nearly-max and continues.
+
+Walkthrough — `U(0, 1, 0, 0) - 1` (i.e. 2^64 - 1):
 
 ```
-    l[0]:  0 - 0 - 1 -> wraps to M, borrow = 1
-    l[1]:  1 - 1 - 0 = 0, borrow = 0
-    ->  U(M, 0, 0, 0)  [checkmark]
+    wheel 0:  0 - 1  ->  must borrow: reads M, left wheel loses 1
+    wheel 1:  1 - 1 (the debt)  ->  0
+
+    result: U(M, 0, 0, 0) = 2^64 - 1   [checkmark]
 ```
 
-The final borrow off l[3] is FORGIVEN -- that's why 0 - 1 = MAX.
-Negatives live at the top of the ring: -1 = MAX, -2 = MAX - 1, and the
-top bit (bit 255) is the sign flag.
+And the beautiful part — **the last borrow is forgiven.** `0 - 1` rolls
+the whole odometer backwards one tick and it reads all-max: `0xFFFF...`.
+The machine can't represent "negative one"; it can only show the
+position one tick before zero. Which is exactly -1's identity.
 
-## 4. Bitwise  (&  |  ^  ~)
+## The clock face: where negatives live
 
-The lazy ops. Chunks don't talk to each other at all -- bit k of the
-answer depends only on bit k of a and b.
-
-```
-    r.l[i] = a.l[i] & b.l[i];     // four independent ANDs. done.
-```
-
-## 5. Shifting  (<<  >>)
-
-Idea: shift n = (n/64 whole chunks) + (n%64 leftover bits). Chunks slide
-whole; leftover bits spill ACROSS chunk boundaries through a doorway we
-build by hand.
+This deserves its own picture because it's the deepest idea in the
+manual. A four-wheel odometer isn't a number line — it's a **clock**:
 
 ```
-<< 3:     l[3] <- l[2] <- l[1] <- l[0] <- 0
-          each source also donates its top bits to the limb above
-
-<< 74  =  << (64 + 10):
-    limb_shift = 1, bit_shift = 10
-    dest i reads  a.l[i-1] << 10   |   a.l[i-2] >> (64-10)
-                  |                    |
-                  slid up              the 10 bits that fell off
-                  one limb             the limb below's top edge
+                    0
+                    |
+        -2^255  ----+----  +2^255-1
+        (0x80..00)  |      (0x7F..FF)
+                    |
+               the rest of the dial:
+            MAX, MAX-1, ... = -1, -2, ...
 ```
 
-Walkthrough: U(1) << 64 -> limb_shift 1, bit_shift 0 -> l[1] gets l[0]'s
-content whole -> U(0, 1, 0, 0) = 2^64.
+<!-- diagram:clock -->
 
-THE TRAP: when bit_shift == 0 the spill term computes >> 64, and
-shifting a 64-bit value by 64 is UNDEFINED BEHAVIOR (the CPU masks the
-count to 6 bits -> >> 64 silently acts like >> 0). Always guard with
-if (bit_shift && ...).
+Every reading is simultaneously two numbers: what it says unsigned, and
+what it says if you read "one tick before 0" as -1, "two ticks before 0"
+as -2. Same ink, two readings — signed and unsigned are not different
+numbers, they're different *questions you ask about the same number*.
 
-Bits that slide off l[3]'s top (<<) or l[0]'s bottom (>>) fall off the
-page. Gone.
+The top half of the dial (bit 255 set) IS the negative half. `slt` vs
+`lt`, `sdiv` vs `div` — later ops differ only in which half of the dial
+they take seriously. Your `operator-` already produces correct signed
+results for free; signed ops are just reading conventions.
 
-## 6. Bit / byte access  (bit, byte_at, bit_length)
+## Comparing: find the first disagreement
 
-The indexing idiom used everywhere:  bit i lives at
-
-```
-    limb      = i / 64    (i >> 6)
-    position  = i % 64    (i & 63)
-
-    bit(a, i)  =  (a.l[i/64] >> (i%64)) & 1       // 0 = least significant
-    set bit:   q.l[i/64] |= (1 << (i%64))
-```
-
-byte_at flips convention on purpose: byte 0 = MOST significant byte,
-because the BYTE opcode reads the worksheet like a human reads the
-number (big-endian). byte_at(v, 31) is the last byte of l[0].
-
-bit_length = index of the highest set bit + 1; 0 for zero.
-
-## 7. Multiplying  (*)
-
-The grid. Each chunk is a digit; a digit x digit product needs TWO digit
-slots (like 7 x 8 = 56). _umul128 gives you the two halves: lo and hi.
+Don't compare numbers — compare wheels, starting from the big end. The
+first wheel that disagrees settles everything; nothing to its right can
+overrule it.
 
 ```
-          a3 a2 a1 a0
-        x b3 b2 b1 b0
-    ------------------
-    every (i, j) pair:  ai * bj = hi:B + lo
-                        lo lands in column i+j
-                        hi lands in column i+j+1   (the index IS the
-                                                    place value)
+    a:  [0] [0] [5] [9]        b:  [0] [0] [7] [1]
+                                              ^
+    wheel 3:  0 = 0  tie       -> keep walking
+    wheel 2:  0 = 0  tie       -> keep walking
+    wheel 1:  5 < 7  DECIDED   -> a < b, wheel 0 never consulted
 ```
 
-Walkthrough: U(0,1,0,0) * U(0,1,0,0)  (2^64 * 2^64)
+It's how you'd compare `4700` and `4699` by eye — the hundreds digit
+ends the argument. Write `<` once; `>`, `<=`, `>=` are one-line
+rearrangements of it.
+
+## Bitwise: the ops where wheels don't talk
+
+`&`, `|`, `^`, `~` are the only operations with **no clicks, no
+borrows, no spillover** — bit k of the answer depends only on bit k of
+the two inputs. Each wheel is an independent 64-switch panel:
 
 ```
-    only nonzero pair: i=1, j=1  -> column i+j = 2
-    _umul128(1, 1) -> lo=1, hi=0
-    r.l[2] += 1
-    ->  U(0, 0, 1, 0)  =  2^128   [checkmark]
+    r.wheel[i] = a.wheel[i] & b.wheel[i]     // four native ANDs. done.
 ```
 
-Carry bookkeeping: c is a FLAG (0/1) for "did this add wrap"; carry is a
-VALUE (hi can be a whole limb). hi <= B-2 because the biggest digit
-product is (B-1)^2 = (B-2)B + 1 -- like 9x9=81 never carries a 10.
+That's why they're the easy warm-up: the machinery of carries that makes
+arithmetic hard simply isn't present.
 
-## 8. Dividing  (/  %)
+## Shifting: the conveyor belt
 
-Binary long division: the quotient digit can only be 0 or 1, so there's
-no guessing -- just "does the divisor fit?"
+Now imagine all 256 bits as beads on a conveyor belt. `<< n` means
+"pull the belt n places to the left." Two things happen at once, and
+keeping them separate is the whole skill:
 
-```
-    q = 0, r = 0
-    for i = 255 down to 0:               // peel a's bits, MSB first
-        r = (r << 1) | bit(a, i)         // "bring down the next digit"
-        if r >= b:                       // divisor fits?
-            r = r - b;  set bit i of q
-```
+1. **Beads that reach the left edge fall off** — off the page, gone.
+   (Zeros feed in from the right to fill the gap.)
+2. **The wheels aren't welded shut** — a bead sliding off the top of
+   wheel 0 doesn't vanish; it lands at the bottom of wheel 1.
 
-Walkthrough: 13 / 3  (a = 1101, b = 0011)
+Every shift `n` splits into `n = 64*(n/64) + (n%64)`:
 
 ```
-    i=3: r = 0<<1 |1 = 1    1 >= 3? no           q = 0000
-    i=2: r = 1<<1 |1 = 3    3 >= 3? yes  r = 0   q = 0100
-    i=1: r = 0<<1 |0 = 0    0 >= 3? no           q = 0100
-    i=0: r = 0<<1 |1 = 1    1 >= 3? no           q = 0100
-    ->  q = 4,  r = 1    and 13 = 4*3 + 1  [checkmark]
+    n/64  = how many wheels slide over whole
+    n%64  = the leftover slide within a wheel
 ```
 
-Rulebook quirks: x / 0 = 0,  x % 0 = 0  -- no panicking allowed.
-
-## 9. Signed ops  (slt  sgt  sdiv  smod)
-
-Same ink, different reading. The bits don't change; bit 255 = sign.
+Example: `<< 74` = slide one whole wheel, plus 10 bits within each wheel.
+Destination wheel `i` gets its content from TWO sources — like catching
+rain in a gutter that also receives drips from the roof below:
 
 ```
-    unsigned:  0xFF..FF = 2^256 - 1        signed: 0xFF..FF = -1
-    unsigned:  0x80..00 = 2^255            signed: 0x80..00 = -2^255
+    dest wheel i  =  (src wheel i-1 slid up 10 bits)   -- main slide
+                  |  (top 10 bits of wheel i-2)        -- spill through
+                                                        the doorway
 ```
 
-slt: compare as signed -- if signs differ, negative loses; if same sign,
-compare normally (but for two negatives, bigger magnitude = smaller).
-sdiv/smod: work on magnitudes, fix the sign after -- result takes the
-sign of the dividend; sdiv(-2^255, -1) wraps back to -2^255.
+<!-- diagram:doorway -->
 
-## 10. addmod / mulmod -- the trap
+The spill piece is `a.l[src-1] >> (64 - 10)` — take the source's top 10
+beads, walk them down to the bottom, and OR them into the gap the slide
+left open. `>>` is the mirror: belt pulls right, beads fall off wheel
+0's right edge, zeros feed into wheel 3's top.
 
-(a + b) mod n CANNOT be done as "add, wrap, then mod" -- because a + b
-itself can overflow the page, and the wrapped residue is a DIFFERENT
-number mod n.
+**The trap:** when the leftover is 0 (`<< 64`, `<< 128`), the spill
+formula computes `>> 64` — and shifting a 64-bit value by 64 is
+undefined behavior (the hardware quietly masks it to `>> 0` and leaks
+garbage). Guard every spill term with `if (bit_shift && ...)`. This is
+the classic multi-limb bug: it looks right, passes half the tests, and
+corrupts exact-multiple-of-64 shifts.
+
+## Addressing: which wheel, which tick
+
+`bit(a, i)`, `byte_at`, `bit_length` are all the same question —
+*"given a bit index, which wheel and which position?"*
+
+```
+    wheel    = i / 64        which wheel holds bit i
+    position = i % 64        where on that wheel
+
+    bit(a, i)  = (a.l[i/64] >> (i%64)) & 1     // slide it to the end,
+                                                 // mask everything else
+    set bit i:  q.l[i/64] |= 1 << (i%64)       // OR a single-bead mask
+```
+
+One deliberate quirk: `byte_at` counts from the **big end** — byte 0 is
+the most significant byte — because the EVM's BYTE opcode reads the
+number the way a human reads `4702` (left to right). Everything else in
+the room counts from the small end. Keep the two conventions separate.
+
+## Multiplying: the area picture
+
+Here's the 3blue1brown moment. Don't think "multiply digits" — think
+**area**. `a * b` is the area of a rectangle with sides `a` and `b`.
+Cut each side into its four wheels, and the big rectangle tiles into 16
+small ones:
+
+```
+                  a3      a2      a1      a0
+              +-------+-------+-------+-------+
+         b3   | a3b3  | a2b3  | a1b3  | a0b3  |
+              +-------+-------+-------+-------+
+         b2   | a3b2  | a2b2  | a1b2  | a0b2  |
+              +-------+-------+-------+-------+
+         b1   | a3b1  | a2b1  | a1b1  | a0b1  |
+              +-------+-------+-------+-------+
+         b0   | a3b0  | a2b0  | a1b0  | a0b0  |
+              +-------+-------+-------+-------+
+```
+
+Now the key question — *where does each tile's area belong?* Wheel `ai`
+has weight `B^i`, wheel `bj` has weight `B^j`, so tile `(i,j)` is a
+rectangle `B^i` wide and `B^j` tall: its area is `ai*bj * B^(i+j)`.
+**The place value isn't a rule to memorize — it's geometry.** Tiles on
+the same anti-diagonal (`i+j` equal) share a place value and stack into
+the same wheel.
+
+One more physical fact: a wheel-times-wheel product doesn't fit on a
+wheel. `9 x 9 = 81` — a digit times a digit gives a *two-digit* answer.
+Ours is worse: 64-bit x 64-bit = up to 128 bits = **two wheels**, a low
+half and a high half. `_umul128` is the hardware giving you both wheels
+of that sub-answer at once:
+
+```
+    ai * bj = hi : lo          (a 128-bit tile)
+              |    +-- lands on wheel i+j
+              +------- lands on wheel i+j+1 (one position up, always)
+```
+
+<!-- diagram:columns -->
+
+Walkthrough — `U(0,1,0,0) * U(0,1,0,0)` = 2^64 x 2^64 = 2^128:
+
+```
+    only nonzero tile: i=1, j=1 -> lands on wheel 2
+    1 * 1 -> hi=0, lo=1
+    result: U(0, 0, 1, 0)   [checkmark]
+```
+
+Carries here are different from addition: the thing flowing right-to-
+left isn't a flag, it's `hi` — a whole wheel's worth, up to B-2 (since
+the biggest tile is `(B-1)^2 = (B-2)B + 1` — the "9x9=81, you can never
+carry a 10" argument). Tiles with `i+j >= 4` are off the page — the
+rectangle's top-right corner has no wheels to land on. Skipped: that's
+the mod, built into the loop bounds.
+
+## Dividing: the measuring stick
+
+Division answers a child's question: *how many times does the stick `b`
+fit along the rope `a`?* In decimal long division you guess each digit —
+how many times does 37 go into 128? Binary removes the guesswork:
+**the quotient digit can only be 0 or 1.** Either the stick fits or it
+doesn't.
+
+The machine: build the answer one bit at a time, most significant first.
+Keep a "remainder scoop" `r`. Each round, slide the scoop one place and
+drop the next bit of `a` into it — the "bring down the next digit" step
+from school. Then ask the only question: does the stick fit in the
+scoop? If yes, subtract it and write a 1 in the quotient; if no, write
+a 0 and move on.
+
+<!-- diagram:scoop -->
+
+Walkthrough — `13 / 3` (`a = 1101`, `b = 0011`):
+
+```
+    i=3:  scoop = 0<<1 | 1 = 1     stick fits? no          q = 0000
+    i=2:  scoop = 1<<1 | 1 = 3     fits? yes -> scoop = 0  q = 0100
+    i=1:  scoop = 0<<1 | 0 = 0     fits? no                q = 0100
+    i=0:  scoop = 0<<1 | 1 = 1     fits? no                q = 0100
+
+    q = 4, scoop left over = 1      check: 13 = 4*3 + 1   [checkmark]
+```
+
+`r = (r << 1) | bit(a, i)` is "slide the scoop, drop the next bit in"
+— the shift opens a slot at the bottom, the OR drops the bit into it.
+`%` is the same machine returning the scoop instead of the quotient.
+
+Rulebook quirks: `x / 0 = 0`, `x % 0 = 0`. The clerk doesn't panic —
+division by zero is a defined answer, not an error.
+
+## Signed ops: same dial, different reading
+
+No new machinery — `slt`, `sgt`, `sdiv`, `smod` are the clock-face
+section applied. Bit 255 = sign. Signed compare: if signs differ, the
+negative one is smaller; if same sign, compare as usual (remembering
+that among negatives, bigger magnitude = more negative). Signed
+division: do unsigned division on the magnitudes, then paint the sign
+back on — quotient's sign = XOR of the signs, remainder follows the
+dividend's sign.
+
+## addmod / mulmod: the hidden wide desk
+
+Trap ops. `(a + b) mod n` looks like "add, then mod" — but `a + b` can
+roll the odometer, and the rolled-over reading is a *different number*
+mod `n`:
 
 ```
     addmod(max, max, 3):
-        naive:   (max + max) wraps to 2^256 - 2,  % 3 = 2   WRONG
-        exact:   2^257 - 2 mod 3 = 0                        RIGHT
+        naive:   (max + max) wraps to 2^256 - 2;  mod 3 = 2   WRONG
+        true:    2^257 - 2  mod 3 = 0                         RIGHT
 ```
 
-The clerk needs a hidden wider worksheet (a 257-bit or 512-bit
-intermediate) that never goes on the stack. mulmod needs the full 512
-bits of a*b before reducing mod n.
+The clerk needs a hidden wider worksheet — a 257-bit (for add) or
+512-bit (for mul) scratch area that never goes on the visible desk.
+`mulmod` is why the multiplication chapter matters so much: you need
+the FULL 512-bit rectangle before you can fold it mod `n`.
 
-## 11. Conversions  (from_bytes, to_bytes32, hex io)
+## Conversions: the direction you read
 
-The endianness boundary. Inside: limbs are little-endian (l[0] small).
-On the wire/paper: big-endian (most significant byte first). Every
-conversion is just walking the right direction:
+Inside the room: little-endian wheels (wheel 0 is small). On paper, on
+the wire, in test vectors: big-endian (most significant byte first,
+like `4702`). Every conversion is just walking in the right direction:
 
 ```
-    from_bytes:  p[0] is the BIG end -> lands in the TOP of l[3]
-                 p[n-1] is small end -> lands in the BOTTOM of l[0]
-    to_bytes32:  reverse the walk
-    from_hex:    parse digits, shift-and-add (or nibble into limbs)
-    to_hex:      nibble-walk limbs top-down, skip leading zeros
+    from_bytes(p):  p[0] is the BIG end -> top of wheel 3
+                    p[n-1] is small end -> bottom of wheel 0
+    to_bytes32:     reverse walk, pad zeros on the LEFT
+    from_hex:       digits arrive big-end-first too
 ```
 
-## Rules of the room (summary)
+## Rules of the room
 
-- The page is a ring: everything wraps mod 2^256.
-- Carries/borrows between chunks are real; off the page edge, dropped.
-- Each chunk is a digit in base 2^64. Place value = index.
-- Products are two digits wide; quotient digits are only 0 or 1.
-- The clerk never panics: x/0 = 0, and halting is a result.
-- Signed vs unsigned is a READING, not a different number.
+- The odometer has four wheels and no fifth: everything wraps mod 2^256.
+- Carries and borrows between wheels are real; off the edge, forgiven.
+- A wheel is a digit in base 2^64. Position IS place value.
+- Wheel x wheel = two wheels. Quotient digits are only 0 or 1.
+- The clerk never panics: x/0 = 0, and a clean stop is a valid answer.
+- Signed and unsigned are two readings of one dial, not two numbers.
