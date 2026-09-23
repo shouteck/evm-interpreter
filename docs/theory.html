@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Clerk's Arithmetic Manual</title>
+<script>
+window.MathJax = {
+  tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] },
+  chtml: { scale: 1.0 }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<style>
+  :root {
+    --ink: #1a1a2e;
+    --blue: #1e5aa8;
+    --red: #c33d2e;
+    --orange: #d97b1e;
+    --amber-bg: #fff6e5;
+    --blue-bg: #eef4fc;
+    --gray: #8a8a9a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: var(--ink);
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 0 12px;
+    font-size: 11.5pt;
+    line-height: 1.55;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  @page { size: A4; margin: 16mm 14mm; }
+
+  h1 {
+    font-size: 26pt; font-weight: normal; text-align: center;
+    margin: 6pt 0 2pt; letter-spacing: 0.5px;
+  }
+  .subtitle {
+    text-align: center; font-style: italic; color: var(--gray);
+    margin-bottom: 22pt; font-size: 11pt;
+  }
+  h2 {
+    font-size: 15pt; font-weight: normal; color: var(--blue);
+    border-bottom: 1px solid #cdd8ea; padding-bottom: 3pt;
+    margin: 26pt 0 10pt;
+    break-after: avoid;
+  }
+  h2 .num { color: var(--gray); font-size: 12pt; margin-right: 6pt; }
+  p { margin: 7pt 0; }
+
+  code, .mono {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 9.5pt;
+    background: #f4f4f7;
+    padding: 0 3px;
+    border-radius: 2px;
+  }
+  pre {
+    font-family: 'Consolas', monospace; font-size: 9pt; line-height: 1.45;
+    background: #f7f7fa; border: 1px solid #e2e2ea; border-radius: 4px;
+    padding: 8pt 10pt; overflow: hidden; white-space: pre;
+    break-inside: avoid;
+  }
+  .key {
+    background: var(--blue-bg); border-left: 3px solid var(--blue);
+    padding: 7pt 10pt; margin: 10pt 0; border-radius: 0 4px 4px 0;
+    break-inside: avoid;
+  }
+  .key b { color: var(--blue); }
+  .trap {
+    background: var(--amber-bg); border-left: 3px solid var(--orange);
+    padding: 7pt 10pt; margin: 10pt 0; border-radius: 0 4px 4px 0;
+    break-inside: avoid;
+  }
+  .trap b { color: var(--orange); }
+  figure { margin: 12pt 0; text-align: center; break-inside: avoid; }
+  figcaption { font-size: 9pt; color: var(--gray); font-style: italic; margin-top: 4pt; }
+  svg { display: inline-block; }
+  .col { color: var(--blue); font-weight: bold; }
+  .warm { color: var(--red); font-weight: bold; }
+  .orangeword { color: var(--orange); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>The Clerk's Arithmetic Manual</h1>
+<p class="subtitle">How to do math on numbers too big to hold in your head &mdash;<br>
+by picturing machines you <i>can</i> hold in your head.</p>
+
+<h2><span class="num">0</span>The machine: a four-wheel odometer</h2>
+
+<p>Forget bits for a moment. Picture the thing in your car that counts
+miles: a row of wheels, each wheel marked 0 through 9, and when a wheel
+rolls past 9 it snaps back to 0 and clicks the wheel to its left forward
+one notch. That's mechanical addition &mdash; nobody thinks, the wheels
+do it.</p>
+
+<p>Our clerk works with the same machine, except each wheel has
+\(2^{64}\) positions instead of 10 &mdash; a wheel with more markings
+than there are grains of sand on Earth &mdash; and there are exactly
+four wheels.</p>
+
+<figure>
+<svg width="560" height="130" viewBox="0 0 560 130" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="wheel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8f9fc"/>
+      <stop offset="1" stop-color="#dde3ef"/>
+    </linearGradient>
+    <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+      <path d="M0,0 L6,3.5 L0,7 z" fill="#c33d2e"/>
+    </marker>
+    <marker id="arrg" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+      <path d="M0,0 L6,3.5 L0,7 z" fill="#8a8a9a"/>
+    </marker>
+  </defs>
+  <!-- ghost wheel -->
+  <rect x="8" y="30" width="86" height="62" rx="8" fill="none" stroke="#b0b0c0"
+        stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="51" y="56" text-anchor="middle" font-size="11" fill="#8a8a9a" font-style="italic">wheel 4?</text>
+  <text x="51" y="72" text-anchor="middle" font-size="10" fill="#b0b0c0" font-style="italic">doesn't exist</text>
+  <!-- wheels -->
+  <g font-family="Consolas, monospace">
+    <rect x="112" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
+    <rect x="214" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
+    <rect x="316" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
+    <rect x="418" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
+    <text x="155" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[3]</text>
+    <text x="257" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[2]</text>
+    <text x="359" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[1]</text>
+    <text x="461" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[0]</text>
+    <text x="155" y="108" text-anchor="middle" font-size="10" fill="#1e5aa8">x 2^192</text>
+    <text x="257" y="108" text-anchor="middle" font-size="10" fill="#1e5aa8">x 2^128</text>
+    <text x="359" y="108" text-anchor="middle" font-size="10" fill="#1e5aa8">x 2^64</text>
+    <text x="461" y="108" text-anchor="middle" font-size="10" fill="#1e5aa8">x 1</text>
+  </g>
+  <line x1="112" y1="61" x2="96" y2="61" stroke="#c33d2e" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="14" y="124" font-size="10" fill="#8a8a9a" font-style="italic">overflow off wheel 3: gone</text>
+  <text x="461" y="124" font-size="10" fill="#8a8a9a" font-style="italic" text-anchor="end">each wheel: 64 bits, positions 0 .. 2^64 - 1</text>
+</svg>
+<figcaption>The four wheels. The leftmost wheel is the big end; wheel 0
+ticks every time you add 1. There is no fifth wheel.</figcaption>
+</figure>
+
+<p>Each wheel is one <code>uint64_t</code> &mdash; one <i>limb</i>. The
+number itself is the sum of the wheels times their place values:</p>
+
+\[ \text{number} = l_3\,B^3 + l_2\,B^2 + l_1\,B + l_0
+   \qquad\text{where } B = 2^{64} \]
+
+<div class="key"><b>The one rule of the room:</b> position <i>is</i>
+place value. The same digit means \(5\), \(5\cdot 2^{64}\), or
+\(5\cdot 2^{128}\) depending on which wheel holds it &mdash; and whatever
+would have gone on a fifth wheel simply doesn't happen. The odometer
+rolls back to zero and keeps going. Mathematicians call this
+<i>arithmetic mod \(2^{256}\)</i>; a mechanic calls it <i>rolling the
+odometer</i>. Every operation below is a consequence of this picture.</div>
+
+<h2><span class="num">0.5</span>The clock face: where the numbers live</h2>
+
+<p>Ordinary numbers live on a line that goes on forever. The clerk's
+numbers live on a <b>clock</b>. There are exactly \(2^{256}\) positions
+on the dial, and after the last one the hand clicks back to zero.</p>
+
+<figure>
+<svg width="560" height="240" viewBox="0 0 560 240" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L7,4 L0,8 z" fill="#c33d2e"/>
+    </marker>
+    <marker id="arr2b" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L7,4 L0,8 z" fill="#1e5aa8"/>
+    </marker>
+  </defs>
+  <!-- dial -->
+  <circle cx="280" cy="125" r="78" fill="none" stroke="#c9c9d6" stroke-width="2"/>
+  <!-- negative half: left side, from bottom (180deg) to top (360deg) -->
+  <path d="M 280 203 A 78 78 0 0 1 280 47" fill="none" stroke="#1e5aa8" stroke-width="4"/>
+  <!-- tick marks -->
+  <g stroke="#8a8a9a" stroke-width="1.5">
+    <line x1="280" y1="47" x2="280" y2="55"/>
+    <line x1="358" y1="125" x2="350" y2="125"/>
+    <line x1="280" y1="203" x2="280" y2="195"/>
+    <line x1="202" y1="125" x2="210" y2="125"/>
+  </g>
+  <!-- labels on dial -->
+  <text x="280" y="38" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a2e">0</text>
+  <text x="375" y="130" font-size="11" fill="#1a1a2e">1, 2, 3, ...</text>
+  <text x="176" y="130" text-anchor="end" font-size="11" fill="#1e5aa8">..., -3, -2</text>
+  <text x="193" y="70" text-anchor="end" font-size="11" font-weight="bold" fill="#1e5aa8">-1 = MAX</text>
+  <text x="280" y="222" text-anchor="middle" font-size="11" font-weight="bold" fill="#1e5aa8">-2^255</text>
+  <text x="176" y="222" text-anchor="middle" font-size="10" fill="#8a8a9a">bit 255 set</text>
+  <!-- the wrap arrow over the top -->
+  <path d="M 262 30 A 88 88 0 0 1 302 30" fill="none" stroke="#c33d2e" stroke-width="2"
+        marker-end="url(#arr2)"/>
+  <text x="280" y="16" text-anchor="middle" font-size="11" font-weight="bold" fill="#c33d2e">MAX + 1 wraps to 0</text>
+  <!-- walk hints -->
+  <path d="M 340 60 A 92 92 0 0 1 366 105" fill="none" stroke="#1e5aa8" stroke-width="1.5"
+        marker-end="url(#arr2b)" stroke-dasharray="4 3"/>
+  <text x="395" y="85" font-size="10" fill="#1e5aa8">add: walk clockwise</text>
+</svg>
+<figcaption>The dial. Walk clockwise to add, counter-clockwise to
+subtract. The left half is the negative half &mdash; the same ink reads
+two ways.</figcaption>
+</figure>
+
+<p>Walk clockwise to add. Walk counter-clockwise to subtract. Take one
+step <i>backward</i> from 0 and you land on MAX &mdash; the biggest
+possible number. That's why, on this clock, \(0 - 1 = \text{MAX}\). It's
+not an error. It's just&hellip; one step counter-clockwise.</p>
+
+<p>This is the deepest idea in the manual, so keep it in your pocket:
+every reading on the dial is <b>two numbers at once</b>. The all-ones
+pattern is \(2^{256}-1\) if you read it unsigned, and \(-1\) if you read
+it signed. Same ink, two readings &mdash; signed and unsigned aren't
+different numbers, they're different <i>questions you ask about the same
+number</i>. The top half of the dial (bit 255 set) <i>is</i> the
+negative half.</p>
+
+<h2><span class="num">1</span>Comparing: judge the contest from the big end</h2>
+
+<p>Which is bigger, 4,700 or 4,699? You never look at the ones digit
+&mdash; the hundreds digits (7 vs 6) already settled it. Same rule with
+wheels: compare the biggest wheels first, walk right, and the first
+wheel that disagrees decides everything.</p>
+
+<pre>    a:  [0] [0] [5] [9]
+    b:  [0] [0] [7] [1]
+                 ^
+    wheel 3:  0 = 0   tie
+    wheel 2:  0 = 0   tie
+    wheel 1:  5 &lt; 7   DECIDED -&gt; a &lt; b   (wheel 0 never consulted)</pre>
+
+<p>One real algorithm; the rest are free: \(a &gt; b\) means \(b &lt; a\),
+\(a \le b\) means \(\lnot(b &lt; a)\).</p>
+
+<h2><span class="num">2</span>Adding: wheels rolling over</h2>
+
+<p>Adding is ticking the odometer forward, one wheel at a time, right to
+left, carrying rollovers leftward. And here's the lovely trick for
+<em>spotting</em> a rollover: when a wheel wraps past its maximum, the
+total it shows comes out <b>smaller than what you added</b>.</p>
+
+<pre>    s = a.l[i] + b.l[i]
+    carry = (s &lt; a.l[i])      // wrapped? you owe the next wheel 1</pre>
+
+<p>Walkthrough &mdash; add 1 to a number whose small wheel is already
+maxed out (\(M = 2^{64}-1\)):</p>
+
+<pre>    a = [0] [0] [0] [M]
+    b = [0] [0] [0] [1]
+
+    wheel 0:  M + 1 rolls over to 0 ... and kicks a 1 into wheel 1
+    wheel 1:  0 + 0 + 1 (the kick) = 1
+    result:   [0] [0] [1] [0]  =  2^64   &#x2713;</pre>
+
+<figure>
+<svg width="560" height="150" viewBox="0 0 560 150" xmlns="http://www.w3.org/2000/svg">
+  <g font-family="Consolas, monospace" font-size="13" text-anchor="middle">
+    <!-- carry arrow over row a -->
+    <path d="M 476 22 L 476 12 L 374 12 L 374 20" fill="none" stroke="#c33d2e" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="425" y="9" font-size="10" fill="#c33d2e" font-weight="bold">carry 1</text>
+    <!-- rows -->
+    <text x="40" y="37" font-size="12" text-anchor="end" font-family="Georgia" font-style="italic">a</text>
+    <text x="40" y="71" font-size="12" text-anchor="end" font-family="Georgia" font-style="italic">+ b</text>
+    <g>
+      <rect x="170" y="22" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="272" y="22" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="374" y="22" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="476" y="22" width="56" height="22" fill="#fdeeee" stroke="#c33d2e" stroke-width="1.5"/>
+      <text x="198" y="38">0</text><text x="300" y="38">0</text>
+      <text x="402" y="38">0</text><text x="504" y="38" fill="#c33d2e" font-weight="bold">M</text>
+      <rect x="170" y="56" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="272" y="56" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="374" y="56" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="476" y="56" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <text x="198" y="72">0</text><text x="300" y="72">0</text>
+      <text x="402" y="72">0</text><text x="504" y="72">1</text>
+    </g>
+    <line x1="170" y1="88" x2="532" y2="88" stroke="#1a1a2e" stroke-width="1.5"/>
+    <g font-weight="bold">
+      <rect x="170" y="96" width="56" height="22" fill="#eef4fc" stroke="#1e5aa8"/>
+      <rect x="272" y="96" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <rect x="374" y="96" width="56" height="22" fill="#eef4fc" stroke="#1e5aa8"/>
+      <rect x="476" y="96" width="56" height="22" fill="#f4f4f8" stroke="#9aa2b8"/>
+      <text x="198" y="112">0</text><text x="300" y="112">0</text>
+      <text x="402" y="112" fill="#1e5aa8">1</text><text x="504" y="112">0</text>
+    </g>
+    <text x="500" y="140" text-anchor="end" font-size="10" fill="#8a8a9a" font-style="italic" font-family="Georgia">U(M,0,0,0) + 1 = U(0,1,0,0) = 2^64</text>
+  </g>
+</svg>
+<figcaption>Wheel 0 rolls over, clicks wheel 1 forward. Three wheels
+never move.</figcaption>
+</figure>
+
+<p>And if the <b>last</b> wheel overflows? The kick falls off the edge
+of the page. Remember the clock &mdash; that's just wrapping past the
+top. \(\text{MAX} + 1\) really is \(0\). The arithmetic is doing
+\(\bmod\ 2^{256}\) for free.</p>
+
+<h2><span class="num">3</span>Subtracting: winding backwards</h2>
+
+<p>Same machine, wound the other way. When a wheel needs to go below 0
+it can't &mdash; so it borrows a full turn from the wheel to its left:
+the left wheel winds back one notch, the right wheel wraps to nearly-max
+and keeps paying.</p>
+
+<pre>    U(0, 1, 0, 0) - 1   (that is, 2^64 - 1)
+
+    wheel 0:  0 - 1 can't pay, borrows: reads M, left wheel owes 1
+    wheel 1:  1 - 1 (the debt) = 0
+    result:   U(M, 0, 0, 0)   &#x2713;</pre>
+
+<div class="key"><b>The last borrow is forgiven.</b> \(0 - 1\) rolls the
+whole odometer backwards one tick and it reads all-max:
+<code>0xFFFF&hellip;</code>. The machine can't write "negative one"; it
+can only show the position one tick before zero. Which is exactly
+\(-1\)'s identity. Negatives live at the top of the dial, counting down
+from MAX: \(-1 = \text{MAX}\), \(-2 = \text{MAX} - 1\), all the way to
+\(-2^{255} = \texttt{0x80..00}\).</div>
+
+<h2><span class="num">4</span>Bitwise: the only antisocial ops</h2>
+
+<p><code>&amp;</code>, <code>|</code>, <code>^</code>, <code>~</code>
+are the lazy operations &mdash; the wheels don't talk to each other
+<em>at all</em>. Bit \(k\) of the answer depends only on bit \(k\) of
+the two inputs. No clicks, no borrows, no spill.</p>
+
+<pre>    r.l[i] = a.l[i] &amp; b.l[i];     // four independent ANDs. done.</pre>
+
+<p>That's why they're the warm-up: the machinery that makes arithmetic
+hard &mdash; things crossing wheel boundaries &mdash; simply isn't
+present.</p>
+
+<h2><span class="num">5</span>Shifts: the conveyor belt and the doorway</h2>
+
+<p>Now picture all 256 bits as beads on a conveyor belt. <code>&lt;&lt;
+n</code> pulls the belt \(n\) places left. Two things happen at once:
+beads reaching the left edge <b>fall off the page</b>, and beads sliding
+off the top of one wheel <b>land at the bottom of the wheel above</b>
+&mdash; the wheels aren't welded shut.</p>
+
+<p>Every shift splits as \(n = 64\cdot(n/64) + (n\bmod 64)\): whole
+wheels slide over, then the leftover bits slide within each wheel.
+Destination wheel \(i\) collects from <b>two</b> sources &mdash; the
+wheel that slid up into it, plus the spill that fell off the wheel below
+it:</p>
+
+\[ \underbrace{(\text{src wheel} \ll 10)}_{\text{main slide}}
+   \ \Big|\ \
+   \underbrace{(\text{wheel below} \gg (64-10))}_{\text{spill through the doorway}} \]
+
+<figure>
+<svg width="560" height="170" viewBox="0 0 560 170" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arro" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+      <path d="M0,0 L6,3.5 L0,7 z" fill="#d97b1e"/>
+    </marker>
+  </defs>
+  <!-- limb labels -->
+  <text x="140" y="52" text-anchor="middle" font-size="12" font-weight="bold" font-family="Consolas">l[1]</text>
+  <text x="420" y="52" text-anchor="middle" font-size="12" font-weight="bold" font-family="Consolas">l[0]</text>
+  <!-- bit cells: l[1] cells 0-7 at x=84..196, l[0] cells 8-15 at x=364..476 -->
+  <g stroke="#9aa2b8" stroke-width="1">
+    <!-- l[1] -->
+    <rect x="84"  y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="98"  y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="112" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="126" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="140" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <!-- landing zone (l[1] bottom 3 bits) -->
+    <rect x="154" y="60" width="14" height="20" fill="#cfe4ff" stroke="#1e5aa8"/>
+    <rect x="168" y="60" width="14" height="20" fill="#cfe4ff" stroke="#1e5aa8"/>
+    <rect x="182" y="60" width="14" height="20" fill="#cfe4ff" stroke="#1e5aa8"/>
+    <!-- l[0] -->
+    <!-- spill source: l[0] top 3 bits -->
+    <rect x="364" y="60" width="14" height="20" fill="#ffdf9e" stroke="#d97b1e"/>
+    <rect x="378" y="60" width="14" height="20" fill="#ffdf9e" stroke="#d97b1e"/>
+    <rect x="392" y="60" width="14" height="20" fill="#ffdf9e" stroke="#d97b1e"/>
+    <rect x="406" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="420" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="434" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="448" y="60" width="14" height="20" fill="#f7f7fa"/>
+    <rect x="462" y="60" width="14" height="20" fill="#f7f7fa"/>
+  </g>
+  <!-- the doorway: thick boundary -->
+  <line x1="364" y1="58" x2="364" y2="82" stroke="#1a1a2e" stroke-width="2.5"/>
+  <text x="352" y="95" text-anchor="end" font-size="9" fill="#8a8a9a" font-style="italic">the doorway</text>
+  <!-- spill arrow -->
+  <path d="M 385 54 C 385 30, 200 30, 172 54" fill="none" stroke="#d97b1e" stroke-width="2" marker-end="url(#arro)"/>
+  <text x="280" y="30" text-anchor="middle" font-size="10" fill="#d97b1e" font-weight="bold">
+    spill: l[0]'s top 10 bits -&gt; l[1]'s bottom 10   (fetched by l[0] &gt;&gt; 54)</text>
+  <!-- zeros in / off page -->
+  <line x1="512" y1="70" x2="482" y2="70" stroke="#8a8a9a" stroke-width="1.5" marker-end="url(#arrg)"/>
+  <text x="516" y="74" font-size="10" fill="#8a8a9a">0s in</text>
+  <line x1="80" y1="70" x2="50" y2="70" stroke="#8a8a9a" stroke-width="1.5" marker-end="url(#arrg)"/>
+  <text x="50" y="88" font-size="10" fill="#8a8a9a">off the page</text>
+  <!-- slide hint -->
+  <line x1="364" y1="112" x2="200" y2="112" stroke="#1e5aa8" stroke-width="1.5" marker-end="url(#arr2b)" stroke-dasharray="5 3"/>
+  <text x="280" y="128" text-anchor="middle" font-size="10" fill="#1e5aa8">everything slides left; the shaded bits cross the doorway</text>
+</svg>
+<figcaption>&lt;&lt; 74, drawn with 8-bit wheels for visibility. The
+orange bits fall off l[0]'s top edge and land at l[1]'s bottom &mdash;
+the slide alone would lose them.</figcaption>
+</figure>
+
+<p>Your own trace said it best: shifting by \(2\cdot 64 + 10\), wheel
+\(l_3\) gets \(l_1\) slid up and left by 10 &mdash; <i>plus</i> the top
+10 bits of \(l_0\) (its bits 63..54), fetched by shifting \(l_0\)
+<i>right</i> by \(64 - 10 = 54\). OR the two pieces and the doorway is
+rebuilt. <code>&gt;&gt;</code> is the mirror: belt pulls right, beads
+fall off \(l_0\)'s right edge, zeros feed into \(l_3\)'s top.</p>
+
+<div class="trap"><b>The trap:</b> when the leftover is 0
+(<code>&lt;&lt; 64</code>, <code>&lt;&lt; 128</code>), the spill formula
+computes <code>&gt;&gt; 64</code> &mdash; and shifting a 64-bit value by
+64 is <b>undefined behavior</b>: the hardware quietly masks the count,
+<code>&gt;&gt; 64</code> acts like <code>&gt;&gt; 0</code>, and garbage
+leaks in through the doorway. Guard every spill term with
+<code>if (bit_shift &amp;&amp; ...)</code>. It's the classic multi-limb
+bug: looks right, passes half the tests, corrupts exact-multiple-of-64
+shifts.</div>
+
+<h2><span class="num">6</span>Addressing: which wheel, which tick</h2>
+
+<p><code>bit</code>, <code>byte_at</code>, <code>bit_length</code> all
+ask the same question: <i>given a bit index, which wheel and which
+position on it?</i></p>
+
+<pre>    wheel    = i / 64        which wheel holds bit i
+    position = i % 64        where on that wheel
+
+    bit(a, i)   = (a.l[i/64] &gt;&gt; (i%64)) &amp; 1    // slide to the end, mask
+    set bit i:   q.l[i/64] |= 1 &lt;&lt; (i%64)       // OR a one-bead mask</pre>
+
+<p>One deliberate quirk: <code>byte_at</code> counts from the
+<b>big end</b> &mdash; byte 0 is the most significant byte &mdash;
+because the EVM's BYTE opcode reads the number the way a human reads
+4702, left to right. Everything else in the room counts from the small
+end. Keep the two conventions separate.</p>
+
+<h2><span class="num">7</span>Multiplying: the area picture</h2>
+
+<p>Here's the moment it clicks. Don't think "multiply digits" &mdash;
+think <b>area</b>. \(a \times b\) is the area of a rectangle with sides
+\(a\) and \(b\). Cut each side into its four wheels and the big
+rectangle tiles into 16 small ones:</p>
+
+<figure>
+<svg width="560" height="230" viewBox="0 0 560 230" xmlns="http://www.w3.org/2000/svg">
+  <g font-family="Consolas, monospace" font-size="10" text-anchor="middle">
+    <!-- top labels a3..a0 -->
+    <text x="140" y="18">a3</text><text x="240" y="18">a2</text>
+    <text x="340" y="18">a1</text><text x="440" y="18">a0</text>
+    <!-- side labels b3..b0 -->
+    <text x="82" y="58">b3</text><text x="82" y="98">b2</text>
+    <text x="82" y="138">b1</text><text x="82" y="178">b0</text>
+    <!-- grid -->
+    <g fill="#f7f7fa" stroke="#9aa2b8">
+      <!-- rows b3,b2,b1,b0 ; cols a3,a2,a1,a0 -->
+      <rect x="90" y="30" width="100" height="40"/><rect x="190" y="30" width="100" height="40"/>
+      <rect x="290" y="30" width="100" height="40"/><rect x="390" y="30" width="100" height="40"/>
+      <rect x="90" y="70" width="100" height="40"/><rect x="190" y="70" width="100" height="40"/>
+      <rect x="290" y="70" width="100" height="40"/><rect x="390" y="70" width="100" height="40"/>
+      <rect x="90" y="110" width="100" height="40"/><rect x="190" y="110" width="100" height="40"/>
+      <rect x="290" y="110" width="100" height="40"/><rect x="390" y="110" width="100" height="40"/>
+      <rect x="90" y="150" width="100" height="40"/><rect x="190" y="150" width="100" height="40"/>
+      <rect x="290" y="150" width="100" height="40"/><rect x="390" y="150" width="100" height="40"/>
+    </g>
+    <!-- highlight the a1*b1 tile -->
+    <rect x="290" y="110" width="100" height="40" fill="#ffdf9e" stroke="#d97b1e" stroke-width="2"/>
+    <text x="340" y="134" font-size="11" font-weight="bold" fill="#d97b1e">a1·b1</text>
+    <!-- anti-diagonal shading for column i+j=2: tiles (2,0)(1,1)(0,2) -->
+    <rect x="190" y="150" width="100" height="40" fill="#dcecff" opacity="0.7"/>
+    <rect x="390" y="70" width="100" height="40" fill="#dcecff" opacity="0.7"/>
+    <rect x="290" y="110" width="100" height="40" fill="#ffdf9e" stroke="#d97b1e" stroke-width="2" opacity="0.85"/>
+    <text x="340" y="134" font-size="11" font-weight="bold" fill="#d97b1e">a1·b1</text>
+    <!-- annotation -->
+    <text x="140" y="222" font-size="10" fill="#1e5aa8" font-style="italic" font-family="Georgia">
+      same-color tiles share a column: i+j = 2 lands on wheel 2</text>
+  </g>
+</svg>
+<figcaption>The area of tile (i,j) is \(a_i b_j \cdot B^{i+j}\) &mdash;
+place value isn't a rule, it's geometry. Tiles on one anti-diagonal
+share a column.</figcaption>
+</figure>
+
+<p>Why do tiles on a diagonal share a column? Wheel \(a_i\) is worth
+\(B^i\), wheel \(b_j\) is worth \(B^j\), so tile \((i,j)\) is a
+rectangle \(B^i\) wide and \(B^j\) tall: its area is
+\(a_i b_j \cdot B^{i+j}\). The column index <i>is</i> the exponent
+&mdash; you never compute \(B^{i+j}\), you just drop the tile's value
+into slot \(i+j\).</p>
+
+<p>One more physical fact: a wheel-times-wheel product doesn't fit on a
+wheel. \(9 \times 9 = 81\) &mdash; a digit times a digit gives a
+<i>two-digit</i> answer. Ours is worse: 64-bit \(\times\) 64-bit = up to
+128 bits = <b>two wheels</b>. The hardware computes both halves at once;
+C++ hides the top half unless you ask. <code>_umul128</code> is how you
+ask:</p>
+
+<figure>
+<svg width="560" height="140" viewBox="0 0 560 140" xmlns="http://www.w3.org/2000/svg">
+  <!-- the tile -->
+  <rect x="180" y="18" width="200" height="34" rx="4" fill="#eef4fc" stroke="#1e5aa8" stroke-width="1.5"/>
+  <text x="280" y="40" text-anchor="middle" font-size="12" font-family="Consolas" fill="#1a1a2e">ai * bj = hi : lo  (128-bit tile)</text>
+  <!-- column strip: col4(off) col3 col2 col1 col0 -->
+  <g font-family="Consolas" font-size="11" text-anchor="middle">
+    <rect x="90" y="92" width="76" height="26" fill="#f0f0f0" stroke="#b0b0c0" stroke-dasharray="4 3"/>
+    <text x="128" y="109" fill="#8a8a9a">col 4+</text>
+    <rect x="172" y="92" width="76" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="210" y="109">col 3</text>
+    <rect x="254" y="92" width="76" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="292" y="109">col 2</text>
+    <rect x="336" y="92" width="76" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="374" y="109">col 1</text>
+    <rect x="418" y="92" width="76" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="456" y="109">col 0</text>
+  </g>
+  <!-- arrows -->
+  <path d="M 235 52 C 230 66, 218 78, 210 90" fill="none" stroke="#1e5aa8" stroke-width="2" marker-end="url(#arr2b)"/>
+  <text x="192" y="70" font-size="10" fill="#1e5aa8" font-weight="bold">hi → i+j+1</text>
+  <path d="M 320 52 C 315 66, 300 78, 294 90" fill="none" stroke="#c33d2e" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="322" y="70" font-size="10" fill="#c33d2e" font-weight="bold">lo → i+j</text>
+</svg>
+<figcaption>Each tile contributes its low half to column \(i+j\) and its
+high half one column up. Tiles at column 4+ fall off the page.</figcaption>
+</figure>
+
+<p>Walkthrough &mdash; \(U(0,1,0,0) \times U(0,1,0,0)\), i.e.
+\(2^{64} \times 2^{64}\): the only nonzero tile is \((i{=}1, j{=}1)\),
+so its \(lo\) lands on wheel 2, \(hi\) on wheel 3 (it's 0 anyway).
+Result: \(U(0,0,1,0) = 2^{128}\). ✓</p>
+
+<p>Carries here are different from addition: the thing flowing upward
+isn't a flag, it's <code>hi</code> &mdash; a whole wheel's worth, up to
+\(B-2\). Why \(B-2\) max? The biggest tile is \((B-1)^2 = (B-2)B + 1\)
+&mdash; the "9×9=81, you can never carry a 10" argument.</p>
+
+<h2><span class="num">8</span>Dividing: the measuring stick</h2>
+
+<p>Division answers a child's question: <i>how many times does the stick
+\(b\) fit along the rope \(a\)?</i> In decimal long division you guess
+each digit &mdash; how many times does 37 go into 128? Binary removes
+the guesswork: <b>the quotient digit can only be 0 or 1.</b> Either the
+stick fits or it doesn't.</p>
+
+<p>The machine: build the answer one bit at a time, most significant
+first. Keep a "remainder scoop" \(r\). Each round, slide the scoop one
+place and drop the next bit of \(a\) into it &mdash; the "bring down the
+next digit" step from school. Then ask the only question: does the stick
+fit in the scoop? Yes → subtract it and write a 1; no → write a 0 and
+move on.</p>
+
+<figure>
+<svg width="560" height="180" viewBox="0 0 560 180" xmlns="http://www.w3.org/2000/svg">
+  <g font-family="Consolas, monospace">
+    <!-- a's bit strip -->
+    <text x="140" y="30" text-anchor="end" font-size="11" font-family="Georgia" font-style="italic">a = 13</text>
+    <rect x="150" y="16" width="26" height="26" fill="#ffdf9e" stroke="#d97b1e" stroke-width="1.5"/>
+    <rect x="178" y="16" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <rect x="206" y="16" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <rect x="234" y="16" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="163" y="34" font-size="13" font-weight="bold" fill="#d97b1e">1</text>
+    <text x="191" y="34" font-size="13">1</text>
+    <text x="219" y="34" font-size="13">0</text>
+    <text x="247" y="34" font-size="13">1</text>
+    <text x="270" y="34" font-size="10" fill="#8a8a9a" font-family="Georgia" font-style="italic">peeled MSB first</text>
+    <!-- arrow down -->
+    <line x1="163" y1="42" x2="163" y2="66" stroke="#1e5aa8" stroke-width="2" marker-end="url(#arr2b)"/>
+    <text x="172" y="58" font-size="10" fill="#1e5aa8" font-family="Georgia">next bit drops in</text>
+    <!-- scoop and stick -->
+    <rect x="120" y="68" width="86" height="30" rx="4" fill="#ffdf9e" stroke="#d97b1e" stroke-width="1.5"/>
+    <text x="163" y="88" text-anchor="middle" font-size="12" font-weight="bold">scoop r</text>
+    <rect x="300" y="68" width="86" height="30" rx="4" fill="#cfe4ff" stroke="#1e5aa8" stroke-width="1.5"/>
+    <text x="343" y="88" text-anchor="middle" font-size="12" font-weight="bold">stick b</text>
+    <text x="343" y="112" text-anchor="middle" font-size="9" fill="#8a8a9a" font-family="Georgia" font-style="italic">never changes</text>
+    <text x="253" y="88" text-anchor="middle" font-size="11" font-family="Georgia" font-style="italic">fits?</text>
+    <line x1="212" y1="83" x2="296" y2="83" stroke="#1a1a2e" stroke-width="1.5" marker-end="url(#arrg)"/>
+    <text x="120" y="126" font-size="10" font-family="Georgia">if r ≥ b:  r = r − b  and write a 1 into quotient bit i</text>
+    <!-- q strip -->
+    <text x="140" y="158" text-anchor="end" font-size="11" font-family="Georgia" font-style="italic">q</text>
+    <rect x="150" y="144" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <rect x="178" y="144" width="26" height="26" fill="#eef4fc" stroke="#1e5aa8"/>
+    <rect x="206" y="144" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <rect x="234" y="144" width="26" height="26" fill="#f7f7fa" stroke="#9aa2b8"/>
+    <text x="191" y="162" font-size="13" font-weight="bold" fill="#1e5aa8">1</text>
+    <text x="270" y="162" font-size="10" fill="#8a8a9a" font-family="Georgia" font-style="italic">built MSB first, bit by bit</text>
+  </g>
+</svg>
+<figcaption>256 rounds: drop a bit into the scoop, ask "does the stick
+fit?" — subtract if yes, mark a 1.</figcaption>
+</figure>
+
+<p>Walkthrough &mdash; \(13 / 3\) (\(a = 1101_2\), \(b = 0011_2\)):</p>
+
+<pre>    i=3:  scoop = 0&lt;&lt;1 | 1 = 1    stick fits? no           q = 0000
+    i=2:  scoop = 1&lt;&lt;1 | 1 = 3    fits? yes -&gt; scoop = 0   q = 0100
+    i=1:  scoop = 0&lt;&lt;1 | 0 = 0    fits? no                 q = 0100
+    i=0:  scoop = 0&lt;&lt;1 | 1 = 1    fits? no                 q = 0100
+
+    q = 4, scoop left over = 1     check: 13 = 4*3 + 1   &#x2713;</pre>
+
+<p><code>r = (r &lt;&lt; 1) | bit(a, i)</code> is "slide the scoop, drop the
+next bit in." <code>%</code> is the same machine returning the scoop
+instead of the quotient.</p>
+
+<div class="key"><b>Rulebook quirks:</b> \(x / 0 = 0\), \(x \bmod 0 =
+0\). The clerk doesn't panic &mdash; division by zero is a defined
+answer, not an error.</div>
+
+<h2><span class="num">9</span>Signed ops: same dial, different reading</h2>
+
+<p>No new machinery &mdash; <code>slt</code>, <code>sgt</code>,
+<code>sdiv</code>, <code>smod</code> are the clock-face section applied.
+Bit 255 = the sign flag. Signed compare: if signs differ, the negative
+one is smaller; same sign, compare as usual &mdash; remembering that
+among negatives, bigger magnitude means <i>more</i> negative. Signed
+division: unsigned-divide the magnitudes, then paint the sign back on
+&mdash; the quotient takes the XOR of the signs, the remainder follows
+the dividend's sign.</p>
+
+<h2><span class="num">10</span>addmod / mulmod: the hidden wide desk</h2>
+
+<p>Trap ops. \((a + b) \bmod n\) looks like "add, then mod" &mdash; but
+\(a + b\) can roll the odometer, and the rolled-over reading is a
+<i>different number</i> mod \(n\):</p>
+
+<pre>    addmod(MAX, MAX, 3):
+        naive:   (MAX + MAX) wraps to 2^256 - 2;  mod 3 = 2   WRONG
+        true:    2^257 - 2 mod 3 = 0                          RIGHT</pre>
+
+<p>The clerk needs a hidden wider worksheet &mdash; a 257-bit scratch
+area for add, a full 512-bit one for mul &mdash; that never goes on the
+visible desk. <code>mulmod</code> is why the multiplication chapter
+matters so much: you need the <b>full</b> 512-bit rectangle before you
+can fold it mod \(n\).</p>
+
+<h2><span class="num">11</span>Conversions: the direction you read</h2>
+
+<p>Inside the room: little-endian wheels (wheel 0 is small). On paper,
+on the wire, in test vectors: big-endian &mdash; most significant byte
+first, like 4702. Every conversion is just walking in the right
+direction:</p>
+
+<pre>    from_bytes(p):  p[0] is the BIG end -&gt; top of wheel 3
+                    p[n-1] is small end -&gt; bottom of wheel 0
+    to_bytes32:     reverse walk, pad zeros on the LEFT
+    from_hex:       digits arrive big-end-first too</pre>
+
+<h2><span class="num">&bull;</span>Rules of the room</h2>
+
+<pre>    - The odometer has four wheels and no fifth: everything wraps mod 2^256.
+    - Carries and borrows between wheels are real; off the edge, forgiven.
+    - A wheel is a digit in base 2^64. Position IS place value.
+    - Wheel x wheel = two wheels. Quotient digits are only 0 or 1.
+    - The clerk never panics: x/0 = 0, and a clean stop is a valid answer.
+    - Signed and unsigned are two readings of one dial, not two numbers.</pre>
+
+</body>
+</html>
