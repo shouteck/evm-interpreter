@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+fo<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -128,6 +128,17 @@ four wheels.</p>
     <rect x="214" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
     <rect x="316" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
     <rect x="418" y="30" width="86" height="62" rx="8" fill="url(#wheel)" stroke="#7a86a8" stroke-width="1.5"/>
+    <!-- tick marks suggesting a rotating drum -->
+    <g stroke="#9aa2b8" stroke-width="1">
+      <line x1="135" y1="34" x2="135" y2="42"/><line x1="155" y1="34" x2="155" y2="42"/><line x1="175" y1="34" x2="175" y2="42"/>
+      <line x1="135" y1="80" x2="135" y2="88"/><line x1="155" y1="80" x2="155" y2="88"/><line x1="175" y1="80" x2="175" y2="88"/>
+      <line x1="237" y1="34" x2="237" y2="42"/><line x1="257" y1="34" x2="257" y2="42"/><line x1="277" y1="34" x2="277" y2="42"/>
+      <line x1="237" y1="80" x2="237" y2="88"/><line x1="257" y1="80" x2="257" y2="88"/><line x1="277" y1="80" x2="277" y2="88"/>
+      <line x1="339" y1="34" x2="339" y2="42"/><line x1="359" y1="34" x2="359" y2="42"/><line x1="379" y1="34" x2="379" y2="42"/>
+      <line x1="339" y1="80" x2="339" y2="88"/><line x1="359" y1="80" x2="359" y2="88"/><line x1="379" y1="80" x2="379" y2="88"/>
+      <line x1="441" y1="34" x2="441" y2="42"/><line x1="461" y1="34" x2="461" y2="42"/><line x1="481" y1="34" x2="481" y2="42"/>
+      <line x1="441" y1="80" x2="441" y2="88"/><line x1="461" y1="80" x2="461" y2="88"/><line x1="481" y1="80" x2="481" y2="88"/>
+    </g>
     <text x="155" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[3]</text>
     <text x="257" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[2]</text>
     <text x="359" y="68" text-anchor="middle" font-size="15" fill="#1a1a2e">l[1]</text>
@@ -197,10 +208,13 @@ on the dial, and after the last one the hand clicks back to zero.</p>
   <path d="M 262 30 A 88 88 0 0 1 302 30" fill="none" stroke="#c33d2e" stroke-width="2"
         marker-end="url(#arr2)"/>
   <text x="280" y="16" text-anchor="middle" font-size="11" font-weight="bold" fill="#c33d2e">MAX + 1 wraps to 0</text>
-  <!-- walk hints -->
+  <!-- walk hints: add clockwise on the right, subtract counter-clockwise on the left -->
   <path d="M 340 60 A 92 92 0 0 1 366 105" fill="none" stroke="#1e5aa8" stroke-width="1.5"
         marker-end="url(#arr2b)" stroke-dasharray="4 3"/>
   <text x="395" y="85" font-size="10" fill="#1e5aa8">add: walk clockwise</text>
+  <path d="M 198 180 A 95 95 0 0 0 218 62" fill="none" stroke="#1e5aa8" stroke-width="1.5"
+        marker-end="url(#arr2b)" stroke-dasharray="4 3"/>
+  <text x="30" y="196" font-size="10" fill="#1e5aa8">subtract: walk counter-clockwise</text>
 </svg>
 <figcaption>The dial. Walk clockwise to add, counter-clockwise to
 subtract. The left half is the negative half &mdash; the same ink reads
@@ -331,9 +345,12 @@ the two inputs. No clicks, no borrows, no spill.</p>
 
 <pre>    r.l[i] = a.l[i] &amp; b.l[i];     // four independent ANDs. done.</pre>
 
-<p>That's why they're the warm-up: the machinery that makes arithmetic
-hard &mdash; things crossing wheel boundaries &mdash; simply isn't
-present.</p>
+<p>Picture two wheels held face to face as stencils: every hole that
+lines up lets light through (&amp;), any hole in either lets light
+through (|), holes that differ let light through (^). No wheel ever
+needs to know what its neighbor did. That's why they're the warm-up:
+the machinery that makes arithmetic hard &mdash; things crossing wheel
+boundaries &mdash; simply isn't present.</p>
 
 <h2><span class="num">5</span>Shifts: the conveyor belt and the doorway</h2>
 
@@ -344,10 +361,20 @@ off the top of one wheel <b>land at the bottom of the wheel above</b>
 &mdash; the wheels aren't welded shut.</p>
 
 <p>Every shift splits as \(n = 64\cdot(n/64) + (n\bmod 64)\): whole
-wheels slide over, then the leftover bits slide within each wheel.
-Destination wheel \(i\) collects from <b>two</b> sources &mdash; the
-wheel that slid up into it, plus the spill that fell off the wheel below
-it:</p>
+wheels slide over, then the leftover bits slide within each wheel. Think
+of it as two separate moves: first the wheels themselves hop positions,
+then every bit slides a little more inside its wheel.</p>
+
+<p>How does a destination wheel know <i>who</i> ended up inside it?
+Ask the question backwards — <i>who was standing toward the small end
+before the slide?</i> If every wheel hopped left by
+<code>limb_shift</code> positions, then the wheel now inside wheel
+\(i\) started <code>limb_shift</code> positions below it:
+<code>src = i - limb_shift</code>. That's the whole rule — the
+destination reads downward, and if <code>src</code> is negative, nobody
+reaches it, so it stays zero. And the doorway donor is always the wheel
+one position below the source (<code>src - 1</code>): its top bits are
+exactly the ones the slide pushed off its own top edge.</p>
 
 \[ \underbrace{(\text{src wheel} \ll 10)}_{\text{main slide}}
    \ \Big|\ \
@@ -398,13 +425,16 @@ it:</p>
   <text x="516" y="74" font-size="10" fill="#8a8a9a">0s in</text>
   <line x1="80" y1="70" x2="50" y2="70" stroke="#8a8a9a" stroke-width="1.5" marker-end="url(#arrg)"/>
   <text x="50" y="88" font-size="10" fill="#8a8a9a">off the page</text>
-  <!-- slide hint -->
-  <line x1="364" y1="112" x2="200" y2="112" stroke="#1e5aa8" stroke-width="1.5" marker-end="url(#arr2b)" stroke-dasharray="5 3"/>
-  <text x="280" y="128" text-anchor="middle" font-size="10" fill="#1e5aa8">everything slides left; the shaded bits cross the doorway</text>
+  <!-- step 1: whole-wheel hop -->
+  <line x1="364" y1="118" x2="200" y2="118" stroke="#1e5aa8" stroke-width="1.5" marker-end="url(#arr2b)" stroke-dasharray="5 3"/>
+  <text x="280" y="134" text-anchor="middle" font-size="10" fill="#1e5aa8">step 1: whole wheel hops left (n/64 positions)</text>
+  <!-- step 2 label near spill arrow -->
+  <text x="280" y="14" text-anchor="middle" font-size="10" fill="#d97b1e" font-weight="bold">step 2: bits slide inside each wheel (n mod 64)</text>
 </svg>
-<figcaption>&lt;&lt; 74, drawn with 8-bit wheels for visibility. The
-orange bits fall off l[0]'s top edge and land at l[1]'s bottom &mdash;
-the slide alone would lose them.</figcaption>
+<figcaption>&lt;&lt; 74 = 64 + 10, drawn with 8-bit wheels for
+visibility. Wheel l[0]'s content lands on l[1]'s doorstep, then slides
+10 bits further — its top 10 bits (orange) cross the doorway into the
+next wheel's bottom.</figcaption>
 </figure>
 
 <p>Your own trace said it best: shifting by \(2\cdot 64 + 10\), wheel
@@ -450,42 +480,68 @@ think <b>area</b>. \(a \times b\) is the area of a rectangle with sides
 rectangle tiles into 16 small ones:</p>
 
 <figure>
-<svg width="560" height="230" viewBox="0 0 560 230" xmlns="http://www.w3.org/2000/svg">
+<svg width="560" height="240" viewBox="0 0 560 240" xmlns="http://www.w3.org/2000/svg">
   <g font-family="Consolas, monospace" font-size="10" text-anchor="middle">
     <!-- top labels a3..a0 -->
-    <text x="140" y="18">a3</text><text x="240" y="18">a2</text>
-    <text x="340" y="18">a1</text><text x="440" y="18">a0</text>
+    <text x="140" y="18" font-weight="bold">a3</text><text x="240" y="18" font-weight="bold">a2</text>
+    <text x="340" y="18" font-weight="bold">a1</text><text x="440" y="18" font-weight="bold">a0</text>
     <!-- side labels b3..b0 -->
-    <text x="82" y="58">b3</text><text x="82" y="98">b2</text>
-    <text x="82" y="138">b1</text><text x="82" y="178">b0</text>
-    <!-- grid -->
-    <g fill="#f7f7fa" stroke="#9aa2b8">
-      <!-- rows b3,b2,b1,b0 ; cols a3,a2,a1,a0 -->
-      <rect x="90" y="30" width="100" height="40"/><rect x="190" y="30" width="100" height="40"/>
-      <rect x="290" y="30" width="100" height="40"/><rect x="390" y="30" width="100" height="40"/>
-      <rect x="90" y="70" width="100" height="40"/><rect x="190" y="70" width="100" height="40"/>
-      <rect x="290" y="70" width="100" height="40"/><rect x="390" y="70" width="100" height="40"/>
-      <rect x="90" y="110" width="100" height="40"/><rect x="190" y="110" width="100" height="40"/>
-      <rect x="290" y="110" width="100" height="40"/><rect x="390" y="110" width="100" height="40"/>
-      <rect x="90" y="150" width="100" height="40"/><rect x="190" y="150" width="100" height="40"/>
-      <rect x="290" y="150" width="100" height="40"/><rect x="390" y="150" width="100" height="40"/>
+    <text x="82" y="58" font-weight="bold">b3</text><text x="82" y="98" font-weight="bold">b2</text>
+    <text x="82" y="138" font-weight="bold">b1</text><text x="82" y="178" font-weight="bold">b0</text>
+    <!-- tiles: each labeled with its column i+j. cols a3..a0 at x=90..390, rows b3..b0 at y=30..150 -->
+    <!-- off-page tiles i+j>=4 in red tint -->
+    <g stroke="#b0b0c0" fill="#fdeeee">
+      <rect x="90"  y="30"  width="100" height="40"/>
+      <rect x="190" y="30"  width="100" height="40"/>
+      <rect x="290" y="30"  width="100" height="40"/>
+      <rect x="90"  y="70"  width="100" height="40"/>
+      <rect x="190" y="70"  width="100" height="40"/>
+      <rect x="90"  y="110" width="100" height="40"/>
     </g>
-    <!-- highlight the a1*b1 tile -->
+    <g font-size="10" fill="#c33d2e">
+      <text x="140" y="55">a3·b3 → 6</text><text x="240" y="55">a2·b3 → 5</text>
+      <text x="340" y="55">a1·b3 → 4</text>
+      <text x="140" y="95">a3·b2 → 5</text><text x="240" y="95">a2·b2 → 4</text>
+      <text x="140" y="135">a3·b1 → 4</text>
+    </g>
+    <!-- on-page tiles -->
+    <g stroke="#9aa2b8" fill="#f7f7fa">
+      <rect x="390" y="30"  width="100" height="40"/>
+      <rect x="290" y="70"  width="100" height="40"/>
+      <rect x="190" y="110" width="100" height="40"/>
+      <rect x="390" y="110" width="100" height="40"/>
+      <rect x="90"  y="150" width="100" height="40"/>
+      <rect x="190" y="150" width="100" height="40"/>
+      <rect x="290" y="150" width="100" height="40"/>
+      <rect x="390" y="150" width="100" height="40"/>
+    </g>
+    <g font-size="10" fill="#4a4a5e">
+      <text x="440" y="55">a0·b3 → 3</text>
+      <text x="340" y="95">a1·b2 → 3</text>
+      <text x="240" y="135">a2·b1 → 3</text><text x="440" y="135">a0·b1 → 1</text>
+      <text x="140" y="175">a3·b0 → 3</text>
+      <text x="340" y="175">a1·b0 → 1</text><text x="440" y="175">a0·b0 → 0</text>
+    </g>
+    <!-- anti-diagonal i+j=2 -->
+    <rect x="390" y="70"  width="100" height="40" fill="#dcecff" opacity="0.8"/>
+    <rect x="190" y="150" width="100" height="40" fill="#dcecff" opacity="0.8"/>
     <rect x="290" y="110" width="100" height="40" fill="#ffdf9e" stroke="#d97b1e" stroke-width="2"/>
-    <text x="340" y="134" font-size="11" font-weight="bold" fill="#d97b1e">a1·b1</text>
-    <!-- anti-diagonal shading for column i+j=2: tiles (2,0)(1,1)(0,2) -->
-    <rect x="190" y="150" width="100" height="40" fill="#dcecff" opacity="0.7"/>
-    <rect x="390" y="70" width="100" height="40" fill="#dcecff" opacity="0.7"/>
-    <rect x="290" y="110" width="100" height="40" fill="#ffdf9e" stroke="#d97b1e" stroke-width="2" opacity="0.85"/>
-    <text x="340" y="134" font-size="11" font-weight="bold" fill="#d97b1e">a1·b1</text>
-    <!-- annotation -->
-    <text x="140" y="222" font-size="10" fill="#1e5aa8" font-style="italic" font-family="Georgia">
-      same-color tiles share a column: i+j = 2 lands on wheel 2</text>
+    <g font-size="10">
+      <text x="440" y="95" fill="#1e5aa8">a0·b2 → 2</text>
+      <text x="240" y="175" fill="#1e5aa8">a2·b0 → 2</text>
+      <text x="340" y="135" font-weight="bold" fill="#d97b1e">a1·b1 → 2</text>
+    </g>
+    <!-- legend -->
+    <text x="90" y="215" text-anchor="start" font-size="10" font-family="Georgia" font-style="italic">
+      <tspan fill="#1e5aa8">blue diagonal: all land on wheel 2</tspan>
+      <tspan dx="14" fill="#c33d2e">red tiles: column ≥ 4 — off the page</tspan>
+    </text>
   </g>
 </svg>
-<figcaption>The area of tile (i,j) is \(a_i b_j \cdot B^{i+j}\) &mdash;
-place value isn't a rule, it's geometry. Tiles on one anti-diagonal
-share a column.</figcaption>
+<figcaption>Each tile is labeled with the column its area lands on:
+tile \((i,j)\) is a rectangle \(B^i\) wide and \(B^j\) tall, so its area
+carries the place value \(B^{i+j}\). Place value isn't a rule — it's
+geometry. Red tiles land past wheel 3: skipped, and that's the mod.</figcaption>
 </figure>
 
 <p>Why do tiles on a diagonal share a column? Wheel \(a_i\) is worth
