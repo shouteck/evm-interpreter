@@ -170,7 +170,7 @@ TEST(bitwise_ops) {
 
     CHECK_U256(U(M), U(0xff00ff00ff00ff00ull) | U(0x00ff00ff00ff00ffull));
     CHECK_U256(U(0), U(M) ^ U(M));
-    CHECK_U256(U(M), ~U(0));
+    CHECK_U256(U(M, M, M, M), ~U(0));
     CHECK_U256(U(0), ~U256::max());
 }
 
@@ -325,7 +325,7 @@ TEST(mulmod_no_wrap_trap) {
     // max * 2 = 2^257 - 2 ≡ 0 mod 10; naive computes (2^256-2) % 10 = 4.
     CHECK_U256(U(0), mulmod(U256::max(), U(2), U(10)));
     // sanity where both agree: (2^256-1)^2 mod 3 = 1 (and naive also gets 1)
-    CHECK_U256(U(1), mulmod(U256::max(), U256::max(), U(3)));
+    CHECK_U256(U(0), mulmod(U256::max(), U256::max(), U(3)));
 }
 
 // ------------------------------------------------------------------
@@ -412,8 +412,15 @@ TEST(prop_u64_oracle) {
         std::uint64_t x = nextrand(), y = nextrand() | 1;  // y != 0
         CHECK_EQ(U(x).low64() + 0, x);                     // sanity
         CHECK((U(x) < U(y)) == (x < y));
-        CHECK_U256(U(x + y), U(x) + U(y));
-        CHECK_U256(U(x - y), U(x) - U(y));
+
+        // The oracle must account for the 64-bit wrap: U(x)+U(y) carries
+        // into l[1] where x+y wraps in uint64; U(x)-U(y) borrows through
+        // all upper limbs where x<y wraps.
+        std::uint64_t s = x + y;
+        CHECK_U256(U(s, s < x ? 1ull : 0ull), U(x) + U(y));
+        std::uint64_t d = x - y;
+        CHECK_U256(U(d, x < y ? M : 0, x < y ? M : 0, x < y ? M : 0),
+                   U(x) - U(y));
         CHECK_U256(U(x / y), U(x) / U(y));
         CHECK_U256(U(x % y), U(x) % U(y));
         if (x < (1ull << 32) && y < (1ull << 32))
