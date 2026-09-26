@@ -80,10 +80,10 @@ TEST(evm_scaffold) {
     CHECK(!vm.halted());
 }
 
-TEST(evm_step_is_yours) {
+TEST(evm_step_stop) {
     InMemoryHost host;
     Evm vm(from_hex("0x00"), host, CallContext{}, 1000);
-    bool threw = false;
-    try { vm.step(); } catch (const std::logic_error&) { threw = true; }
-    CHECK(threw);
+    CHECK(!vm.step());                                 // STOP ends the run
+    CHECK(vm.result().reason == StopReason::Stop);
+    CHECK(vm.halted());
 }

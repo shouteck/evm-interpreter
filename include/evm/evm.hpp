@@ -49,6 +49,10 @@ private:
 
     ExecResult  result_{};
     bool        halted_ = false;
+
+    void push(const U256& v);
+    U256 pop();
+    void halt(StopReason r, Error e = Error::None);
 };
 
 } // namespace evm
