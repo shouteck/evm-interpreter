@@ -3,6 +3,7 @@
 
 #include <stdexcept>
 #include <utility>
+#include <limits>
 
 namespace evm {
 
@@ -12,6 +13,61 @@ Evm::Evm(Bytes code, Host& host, CallContext call, Gas gas)
 ExecResult Evm::run() {
     while (step()) {}
     return result_;
+}
+
+// the price list — one lookup
+static Gas gas_cost(Byte op) {
+    switch (op) {
+        case op::STOP: case op::JUMPDEST:            return 0;
+        case op::PC: case op::MSIZE: case op::GAS:
+        case op::ADDRESS: /* ...very cheap tier */   return 2;
+        case op::ADD: case op::SUB: case op::NOT:
+        case op::LT: case op::GT: /* ... */          return 3;   // "verylow"
+        case op::MUL: case op::DIV: case op::SDIV:
+        case op::MOD: case op::SMOD:
+        case op::SIGNEXTEND:                         return 5;   // "low"
+        case op::ADDMOD: case op::MULMOD:
+        case op::JUMP:                               return 8;   // "mid"
+        case op::MLOAD: case op::MSTORE:
+        case op::MSTORE8:                            return 3;
+        case op::SLOAD:                              return 2100;
+        case op::SSTORE:                             return 20000; // (real rules are subtler)
+        default:                                     return 3;   // PUSH/DUP/SWAP tier
+    }
+}
+
+// finger-moving procedure for the clerk
+// there are 2 checks
+// check 1: is dest even on the wall (the wall is fixed at construction)
+// check 2: is there a bookmark there
+void Evm::jump(const U256& dest) {
+    if (dest >= U256(code_.size()) ||
+        code_[(std::size_t)dest.low64()] != op::JUMPDEST) {
+        halt(StopReason::Halt, Error::InvalidJump);
+        return;
+    }
+    // the clerk picking its finger up and putting it on a different line on the wall
+    pc_ = (std::size_t)dest.low64();    
+}
+
+// does the desk cover from off + 0 to off + len - 1?
+void Evm::mem_expand(const U256& off, std::size_t len) {
+    if ((off.l[1] | off.l[2] | off.l[3]) != 0) {
+        halt(StopReason::Halt, Error::OutOfBounds);
+        return;
+    }
+    std::uint64_t o = off.low64();
+    // checking if off + len - 1 is still within the desk limits
+    if (o > std::numeric_limits<std::size_t>::max() - len) {
+        halt(StopReason::Halt, Error::OutOfBounds);
+        return;
+    }
+    // rounding number of papers up if there's a remainder
+    std::size_t need = ((static_cast<std::size_t>(o) + len + 31) / 32) * 32;
+    // if we need more paper than we have, expand the desk
+    if (need > memory_.size()) {
+        memory_.resize(need);
+    }
 }
 
 static U256 pow_u256(U256 base, U256 exp) {
@@ -31,6 +87,11 @@ bool Evm::step() {
     }
 
     Byte op_code = code_[pc_++];
+    Gas cost = gas_cost(op_code);
+    if ((gas_ -= cost) < 0) {
+        halt(StopReason::Halt, Error::OutOfGas);
+        return false;
+    }
 
     switch (op_code) {
         case op::STOP:
@@ -39,6 +100,97 @@ bool Evm::step() {
         case op::POP:
             pop();
             break;
+        // clerk filing the report with a big red "VOID" stamp on it
+        case op::REVERT: {
+            U256 off = pop(), len = pop();
+            mem_expand(off, (std::size_t)len.low64());
+            if (halted_) return false;
+            result_.output.assign(memory_.begin() + off.low64(),
+                memory_.begin() + off.low64() + len.low64());
+            halt(StopReason::Revert);
+            return false;
+        }
+        // conditional jump
+        case op::JUMPI: {
+            U256 dest = pop(), cond = pop();
+            if (!cond.is_zero()) {
+                jump(dest);
+                if (halted_) return false;
+            }
+            break;
+        }
+        case op::PC: {
+            push(U256(pc_ - 1));
+            break;
+        }
+        case op::GAS: {
+            push(U256(gas_));
+            break;
+        }
+        case op::JUMP: {
+            jump(pop());
+            if (halted_) return false;
+            break;
+        }
+        case op::JUMPDEST: 
+            break;
+        case op::SSTORE: {
+            U256 key = pop(), v = pop();
+            host_.sstore(call_.address, key, v);
+            break;
+        }
+        // clerk phones the country to read a filing-cabinet slot
+        case op::SLOAD: {
+            // key - which slot
+            // call_.address - which filing cabinet (each business has its own, you can't read another business's cabinet)
+            U256 key = pop();
+            push(host_.sload(call_.address, key));
+            break;
+        }
+        case op::RETURN: {
+            U256 off = pop(), len = pop();
+            // clerk may need more than one paper
+            mem_expand(off, (std::size_t)len.low64());
+            if (halted_) return false;
+            // clerk copies the papers from the desk to the output slip
+            result_.output.assign(memory_.begin() + off.low64(),
+                memory_.begin() + off.low64() + len.low64());
+            halt(StopReason::Return);
+            return false;            
+        }
+        // clerk reporting how big its desk currently is
+        case op::MSIZE: {
+            push(U256(memory_.size()));
+            break;
+        }
+        // MSTORE version where clerk writes just one square of the desk
+        case op::MSTORE8: {
+            U256 off = pop(), v = pop();
+            mem_expand(off, 1);
+            if (halted_) return false;
+            memory_[(std::size_t)off.low64()] = (Byte)(v.low64() & 0xff);
+            break;
+        }            
+        case op::MSTORE: {
+            // off - where on desk
+            // v - what to write
+            U256 off = pop(), v = pop();
+            mem_expand(off, 32);
+            if (halted_) return false;
+            to_bytes32(v, &memory_[(std::size_t)off.low64()]);
+            break;
+        }
+        // grab the offset slip from the pile
+        // clerk takes 1 paper off the desk, desk spot off + 0 to off + len - 1
+        // transcribes it onto a slip (desk stores words in paper order)
+        // drops it on top of the pile
+        case op::MLOAD: {
+            U256 off = pop();
+            mem_expand(off, 32);
+            if (halted_) return false;
+            push(from_bytes(&memory_[(std::size_t)off.low64()], 32));
+            break;
+        }
         case op::SAR: {
             U256 s = pop(), v = pop();
             if (s >= U256(256)) {

@@ -53,6 +53,8 @@ private:
     void push(const U256& v);
     U256 pop();
     void halt(StopReason r, Error e = Error::None);
+    void mem_expand(const U256& off, std::size_t len);
+    void jump(const U256& dest);
 };
 
 } // namespace evm

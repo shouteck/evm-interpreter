@@ -362,3 +362,194 @@ TEST(evm_stack_overflow) {
     CHECK_EQ(vm.sp(), 1024u);
 }
 
+// ------------------------------------------------------------------
+// The desk: MSTORE/MLOAD/MSTORE8/MSIZE.
+// ------------------------------------------------------------------
+
+TEST(evm_memory) {
+    InMemoryHost host;
+
+    {   // PUSH1 42; PUSH1 0; MSTORE; PUSH1 0; MLOAD -> 42 back on the pile
+        Evm vm(from_hex("0x602a600052" "600051" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK(vm.peek(0) == U256(42));
+        CHECK_EQ(vm.memory().size(), 32u);
+        CHECK(vm.memory()[31] == 0x2a);   // big-endian: low byte in the last square
+    }
+    {   // untouched desk reads as zero; the read grows it to one sheet
+        Evm vm(from_hex("0x600051" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.peek(0).is_zero());
+        CHECK_EQ(vm.memory().size(), 32u);
+    }
+    {   // MSTORE8 writes a single square; desk still grows a whole sheet
+        Evm vm(from_hex("0x60ab600053" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.memory()[0] == 0xab);
+        CHECK(vm.memory()[1] == 0x00);
+        CHECK_EQ(vm.memory().size(), 32u);
+    }
+    {   // MSIZE: empty desk -> 0; after one store -> 32
+        Evm vm(from_hex("0x59" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.peek(0).is_zero());
+
+        Evm vm2(from_hex("0x602a600052" "59" "00"), host, CallContext{}, 1000);
+        vm2.run();
+        CHECK_EQ(vm2.peek(0).low64(), 32ull);
+    }
+    {   // offset past the 64-bit universe -> OutOfBounds
+        Evm vm(from_hex(std::string("0x7f") + std::string(64, 'f') + "51"),
+               host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Halt);
+        CHECK(vm.result().error == Error::OutOfBounds);
+    }
+}
+
+// ------------------------------------------------------------------
+// RETURN/REVERT: a desk slice becomes the filed report's output.
+// ------------------------------------------------------------------
+
+TEST(evm_return_revert) {
+    InMemoryHost host;
+
+    {   // desk holds 42 at square 31; RETURN(0, 32) ships the whole sheet
+        Evm vm(from_hex("0x602a600052" "60206000f3"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Return);
+        CHECK_EQ(vm.result().output.size(), 32u);
+        CHECK(vm.result().output[31] == 0x2a);
+        CHECK(vm.result().output[0] == 0x00);
+    }
+    {   // RETURN(0,0) on an empty desk -> Return with empty output
+        Evm vm(from_hex("0x60006000f3"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Return);
+        CHECK(vm.result().output.empty());
+    }
+    {   // REVERT: same mechanism, different stamp
+        Evm vm(from_hex("0x60006000fd"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Revert);
+    }
+}
+
+// ------------------------------------------------------------------
+// The filing cabinet: SLOAD/SSTORE via the Host.
+// ------------------------------------------------------------------
+
+TEST(evm_storage) {
+    {   // SSTORE slot0=42, SLOAD slot0 in the same call -> 42
+        InMemoryHost host;
+        Evm vm(from_hex("0x602a600055" "600054" "00"), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK(vm.peek(0) == U256(42));
+    }
+    {   // persistence: same host, a brand-new clerk -> the slot survives
+        InMemoryHost host;
+        Evm day1(from_hex("0x602a600055" "00"), host, CallContext{}, 100000);
+        day1.run();
+        Evm day2(from_hex("0x600054" "00"), host, CallContext{}, 100000);
+        day2.run();
+        CHECK(day2.peek(0) == U256(42));
+    }
+    {   // a different office's cabinet: same slot reads 0
+        InMemoryHost host;
+        Evm vm1(from_hex("0x602a600055" "00"), host, CallContext{}, 100000);
+        vm1.run();
+        CallContext other;
+        other.address[0] = 1;
+        Evm vm2(from_hex("0x600054" "00"), host, other, 100000);
+        vm2.run();
+        CHECK(vm2.peek(0).is_zero());
+    }
+    {   // untouched slot reads 0
+        InMemoryHost host;
+        Evm vm(from_hex("0x600754" "00"), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.peek(0).is_zero());
+    }
+}
+
+// ------------------------------------------------------------------
+// Stamps: per-op charging, GAS, OutOfGas.
+// ------------------------------------------------------------------
+
+TEST(evm_gas) {
+    InMemoryHost host;
+
+    {   // PUSH1 costs 3: a budget of 2 goes bankrupt before the push
+        Evm vm(from_hex("0x6001"), host, CallContext{}, 2);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Halt);
+        CHECK(vm.result().error == Error::OutOfGas);
+    }
+    {   // PUSH1 (3) + STOP (0) on 100 -> 97 stamps left
+        Evm vm(from_hex("0x600100"), host, CallContext{}, 100);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK_EQ(vm.result().gas_left, 97);
+    }
+    {   // GAS pushes the remaining budget after paying its own 2
+        Evm vm(from_hex("0x5a" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK_EQ(vm.peek(0).low64(), 998ull);
+    }
+    {   // SLOAD (2100) bankrupts a budget that survived the PUSH1
+        Evm vm(from_hex("0x600054"), host, CallContext{}, 2000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Halt);
+        CHECK(vm.result().error == Error::OutOfGas);
+    }
+}
+
+// ------------------------------------------------------------------
+// The finger on the wall: JUMP/JUMPI/JUMPDEST/PC.
+// ------------------------------------------------------------------
+
+TEST(evm_jumps) {
+    InMemoryHost host;
+
+    {   // PUSH1 42 stays on the pile; PUSH1 5; JUMP -> JUMPDEST @5 -> STOP
+        Evm vm(from_hex("0x602a600556" "5b00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK(vm.peek(0) == U256(42));
+    }
+    {   // JUMP to position 0: that's a PUSH1 byte, not a bookmark
+        Evm vm(from_hex("0x600056"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Halt);
+        CHECK(vm.result().error == Error::InvalidJump);
+    }
+    {   // JUMP past the end of the wall
+        Evm vm(from_hex("0x60ff56"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().error == Error::InvalidJump);
+    }
+    {   // JUMPI with cond=1 takes the jump to JUMPDEST @5
+        Evm vm(from_hex("0x60016005" "57" "5b00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+    }
+    {   // JUMPI with cond=0 falls through; the bad dest is never checked
+        Evm vm(from_hex("0x600060ff" "57" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+    }
+    {   // walking over a JUMPDEST does nothing
+        Evm vm(from_hex("0x5b00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+    }
+    {   // PC @index2 pushes its own position: 2
+        Evm vm(from_hex("0x6001" "58" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK_EQ(vm.peek(0).low64(), 2ull);
+        CHECK_EQ(vm.peek(1).low64(), 1ull);
+    }
+}
+
