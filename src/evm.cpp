@@ -1,5 +1,6 @@
 #include "evm/evm.hpp"
 #include "evm/opcode.hpp"
+#include "evm/keccak.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -100,6 +101,123 @@ bool Evm::step() {
         case op::POP:
             pop();
             break;
+        case op::SHA3: {
+            U256 off = pop(), len = pop();
+            if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds);
+                return false;
+            }
+            mem_expand(off, (std::size_t)len.low64());
+            if (halted_) return false;         
+            push(keccak256(&memory_[(std::size_t)off.low64()], (std::size_t)len.low64()));
+            break;   
+        }
+        case op::TIMESTAMP:   push(U256(host_.block().timestamp));  break;
+        case op::NUMBER:      push(U256(host_.block().number));     break;
+        case op::COINBASE:    push(host_.block().coinbase);         break;
+        case op::PREVRANDAO:  push(host_.block().difficulty);       break;
+        case op::GASLIMIT:    push(host_.block().gas_limit);        break;
+        case op::CHAINID:     push(host_.block().chain_id);         break;
+        case op::BASEFEE:     push(host_.block().base_fee);         break;
+        case op::GASPRICE:    push(host_.block().gas_price);        break;
+        case op::SELFBALANCE: push(host_.balance(call_.address));   break;            
+        // clerk phones the country to find out about any business's balance
+        case op::BALANCE: {
+            U256 a = pop();
+            Byte buf[32] = {};
+            to_bytes32(a, buf);
+            Address addr;
+            std::copy(buf + 12, buf + 32, addr.begin());
+            push(host_.balance(addr));
+            break;
+        }
+        case op::CODECOPY: {
+            U256 dest = pop(), off = pop(), len = pop();
+            if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds);
+                return false;
+            }
+            mem_expand(dest, (std::size_t)len.low64());
+            if (halted_) return false;
+
+            std::size_t d = (std::size_t)dest.low64();
+            std::size_t n = (std::size_t)len.low64();
+            std::size_t copy = 0;
+            if (off < U256(code_.size()))
+                copy = std::min<std::size_t>(n, code_.size() - (std::size_t)off.low64());
+            for (std::size_t j = 0; j < copy; ++j)
+                memory_[d + j] = code_[(std::size_t)off.low64() + j];
+            for (std::size_t j = copy; j < n; ++j)
+                memory_[d + j] = 0;
+            break;            
+        }
+        case op::CODESIZE: {
+            push(U256(code_.size()));
+            break;
+        }
+        // cash clipped to the envelope which are payment for the business
+        case op::CALLVALUE: {
+            push(call_.call_value);
+            break;
+        }
+        // the resident who mailed the very first envelope
+        case op::ORIGIN: {
+            push(from_bytes(call_.origin.data(), call_.origin.size()));
+            break;
+        }            
+        // clerk reading the resident's address from the envelope and dropping it on top of the pile
+        case op::CALLER: {
+            push(from_bytes(call_.caller.data(), call_.caller.size()));
+            break;
+        }
+        // clerk reading the address of the business from the envelope and dropping it on top of the pile
+        case op::ADDRESS: {
+            push(from_bytes(call_.address.data(), call_.address.size()));
+            break;
+        }
+        // clerk copying from the letter to the desk, from position off to off + len - 1 to desk position dest to dest + len - 1
+        case op::CALLDATACOPY: {
+            // dest square, letter start, count
+            U256 dest = pop(), off = pop(), len = pop();
+            // desk only can accommodate 64 bits
+            if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds);
+                return false;
+            }
+            mem_expand(dest, (std::size_t)len.low64());
+            if (halted_) return false;
+
+            std::size_t d = (std::size_t)dest.low64();
+            std::size_t n = (std::size_t)len.low64();
+            std::size_t copy = 0;
+            if (off < U256(call_.calldata.size()))
+                copy = std::min<std::size_t>(n, call_.calldata.size() - (std::size_t)off.low64());
+            for (std::size_t j = 0; j < copy; ++j)
+                memory_[d + j] = call_.calldata[(std::size_t)off.low64() + j];
+            for (std::size_t j = copy; j < n; ++j)
+                memory_[d + j] = 0;
+            break;
+        }
+        // clerk reading the letter from position i to i + 31 and drops it ontop of the pile
+        case op::CALLDATALOAD: {
+            U256 i = pop();
+            Byte buf[32] = {};
+            // is the position i within the letter?
+            if (i < U256(call_.calldata.size())) {
+                std::size_t off = (std::size_t)i.low64();
+                std::size_t n = call_.calldata.size() - off;
+                if (n > 32) n = 32;
+                for (std::size_t j = 0; j < n; ++j) {
+                    buf[j] = call_.calldata[off + j];
+                }
+            }
+            push(from_bytes(buf, 32));
+            break;
+        }
+        case op::CALLDATASIZE: {
+            push(U256(call_.calldata.size()));
+            break;
+        }
         // clerk filing the report with a big red "VOID" stamp on it
         case op::REVERT: {
             U256 off = pop(), len = pop();

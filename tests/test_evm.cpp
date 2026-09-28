@@ -478,6 +478,52 @@ TEST(evm_storage) {
 // Stamps: per-op charging, GAS, OutOfGas.
 // ------------------------------------------------------------------
 
+// ------------------------------------------------------------------
+// The seal press: SHA3 presses a desk slice into a 256-bit seal.
+// (Expected digests verified against a reference keccak-256.)
+// ------------------------------------------------------------------
+
+TEST(evm_sha3) {
+    InMemoryHost host;
+
+    {   // SHA3(0, 32) over untouched desk = keccak256 of 32 zeros
+        Evm vm(from_hex("0x60206000" "20"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK(vm.peek(0) ==
+              U256::from_hex("290decd9548b62a8d60345a988386fc84ba6bc9"
+                             "5484008f6362f93160ef3e563"));
+    }
+    {   // MSTORE 42 @ 0, then SHA3(0,32): word ending in 0x2a
+        Evm vm(from_hex("0x602a600052" "60206000" "20"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.peek(0) ==
+              U256::from_hex("beced09521047d05b8960b7e7bcc1d1292cf3e4b"
+                             "2a6b63f48335cbde5f7545d2"));
+    }
+    {   // MSTORE8 0xab @ 0, then SHA3(0,1): single byte
+        Evm vm(from_hex("0x60ab600053" "60016000" "20"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.peek(0) ==
+              U256::from_hex("468fc9c005382579139846222b7b0aebc9182ba0"
+                             "73b2455938a86d9753bfb078"));
+    }
+    {   // SHA3(0,0): sealing nothing yields the empty-input digest
+        Evm vm(from_hex("0x60006000" "20"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.peek(0) ==
+              U256::from_hex("c5d2460186f7233c927e7db2dcc703c0e500b653"
+                             "ca82273b7bfad8045d85a470"));
+    }
+    {   // len with high limbs set -> OutOfBounds (can't fit size_t)
+        Evm vm(from_hex(std::string("0x7f") + std::string(64, 'f')
+                        + "6000" "20"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Halt);
+        CHECK(vm.result().error == Error::OutOfBounds);
+    }
+}
+
 TEST(evm_gas) {
     InMemoryHost host;
 

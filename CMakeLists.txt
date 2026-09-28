@@ -17,6 +17,7 @@ add_library(evm
     src/host.cpp
     src/opcode.cpp
     src/hex.cpp
+    src/keccak.cpp
 )
 target_include_directories(evm PUBLIC include)
 
@@ -29,6 +30,7 @@ add_executable(evm_tests
     tests/test_smoke.cpp
     tests/test_uint256.cpp
     tests/test_evm.cpp
+    tests/test_keccak.cpp
 )
 target_link_libraries(evm_tests PRIVATE evm)
 add_test(NAME evm_tests COMMAND evm_tests)
