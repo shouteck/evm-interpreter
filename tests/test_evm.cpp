@@ -524,6 +524,45 @@ TEST(evm_sha3) {
     }
 }
 
+// ------------------------------------------------------------------
+// The bulletin board: LOG0..LOG4 post (address, topics, body).
+// ------------------------------------------------------------------
+
+TEST(evm_log) {
+    {   // MSTORE 42 @ 0; LOG2 topics 1,2 with the 32-byte body.
+        // Push order: topic2, topic1, len, off (off ends on top).
+        InMemoryHost host;
+        Evm vm(from_hex("0x602a600052" "60026001" "60206000" "a2" "00"),
+               host, CallContext{}, 5000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK_EQ(host.logs().size(), 1u);
+        const auto& lg = host.logs()[0];
+        CHECK_EQ(lg.topics.size(), 2u);
+        CHECK(lg.topics[0] == U256(1));
+        CHECK(lg.topics[1] == U256(2));
+        CHECK_EQ(lg.data.size(), 32u);
+        CHECK(lg.data[31] == 0x2a);
+        CHECK(lg.address == Address{});          // this office's stamp
+    }
+    {   // LOG0: body only, no labels
+        InMemoryHost host;
+        Evm vm(from_hex("0x60006000" "a0" "00"), host, CallContext{}, 1000);
+        vm.run();
+        CHECK_EQ(host.logs().size(), 1u);
+        CHECK(host.logs()[0].topics.empty());
+        CHECK(host.logs()[0].data.empty());
+    }
+    {   // a different office posts — the stamp follows call_.address
+        InMemoryHost host;
+        CallContext c;
+        c.address[0] = 0x42;
+        Evm vm(from_hex("0x60006000" "a0" "00"), host, c, 1000);
+        vm.run();
+        CHECK(host.logs()[0].address[0] == 0x42);
+    }
+}
+
 TEST(evm_gas) {
     InMemoryHost host;
 

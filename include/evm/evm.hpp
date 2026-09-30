@@ -53,8 +53,11 @@ private:
     void push(const U256& v);
     U256 pop();
     void halt(StopReason r, Error e = Error::None);
+    void charge_gas(Gas g);            // metered surcharge inside an arm
     void mem_expand(const U256& off, std::size_t len);
     void jump(const U256& dest);
+
+    std::vector<bool> jumpdests_;
 };
 
 } // namespace evm

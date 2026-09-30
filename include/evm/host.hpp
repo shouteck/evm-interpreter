@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <vector>
 #include "evm/types.hpp"
 #include "evm/uint256.hpp"
 
@@ -30,6 +31,16 @@ struct CallContext {
     Bytes   calldata;       // the letter (CALLDATA*)
 };
 
+// One notice on the country's bulletin board (LOG0..LOG4).
+// Write-only: contracts can post, never read back — observers (explorers,
+// indexers) scan these off-chain. Topics are the searchable labels; data
+// is the raw body. Cheap storage: the board doesn't live in world state.
+struct LogRecord {
+    Address           address;   // the business that posted
+    Bytes             data;      // the notice body (desk slice)
+    std::vector<U256> topics;    // up to 4 labels
+};
+
 // The phone line. The interpreter never touches world state directly —
 // it asks the Host. Implementations can be a flat map (tests) or a real
 // state backend (never, in this project's scope).
@@ -40,6 +51,7 @@ public:
     virtual U256 balance(const Address&) const = 0;
     virtual U256 sload(const Address&, const U256& key) const = 0;
     virtual void sstore(const Address&, const U256& key, const U256& value) = 0;
+    virtual void log(const Address&, Bytes data, std::vector<U256> topics) = 0;
     virtual BlockContext block() const = 0;
 };
 
@@ -50,10 +62,12 @@ public:
     U256 balance(const Address& a) const override;
     U256 sload(const Address& a, const U256& key) const override;
     void sstore(const Address& a, const U256& key, const U256& value) override;
+    void log(const Address& a, Bytes data, std::vector<U256> topics) override;
     BlockContext block() const override { return block_; }
 
     void set_balance(const Address& a, const U256& v) { balances_[a] = limbs_of(v); }
     void set_block(const BlockContext& b) { block_ = b; }
+    const std::vector<LogRecord>& logs() const { return logs_; }
 
 private:
     using Limbs = std::array<std::uint64_t, 4>;
@@ -62,6 +76,7 @@ private:
 
     std::map<Address, Limbs> balances_;
     std::map<Address, std::map<Limbs, Limbs>> storage_;
+    std::vector<LogRecord> logs_;
     BlockContext block_{};
 };
 

@@ -23,4 +23,8 @@ void InMemoryHost::sstore(const Address& a, const U256& key, const U256& value) 
     storage_[a][limbs_of(key)] = limbs_of(value);
 }
 
+void InMemoryHost::log(const Address& a, Bytes data, std::vector<U256> topics) {
+    logs_.push_back({a, std::move(data), std::move(topics)});
+}
+
 } // namespace evm

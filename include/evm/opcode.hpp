@@ -48,7 +48,8 @@ inline constexpr std::uint8_t POP = 0x50, MLOAD = 0x51, MSTORE = 0x52,
 inline constexpr std::uint8_t PUSH1 = 0x60;   // .. 0x7f = PUSH32
 inline constexpr std::uint8_t DUP1  = 0x80;   // .. 0x8f = DUP16
 inline constexpr std::uint8_t SWAP1 = 0x90;   // .. 0x9f = SWAP16
-inline constexpr std::uint8_t LOG0  = 0xa0;   // .. 0xa4 = LOG4
+inline constexpr std::uint8_t LOG0 = 0xa0, LOG1 = 0xa1, LOG2 = 0xa2,
+                              LOG3 = 0xa3, LOG4 = 0xa4;
 
 inline constexpr std::uint8_t CREATE = 0xf0, CALL = 0xf1, CALLCODE = 0xf2,
                               RETURN = 0xf3, DELEGATECALL = 0xf4,

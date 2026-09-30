@@ -9,7 +9,16 @@
 namespace evm {
 
 Evm::Evm(Bytes code, Host& host, CallContext call, Gas gas)
-    : code_(std::move(code)), host_(host), call_(std::move(call)), gas_(gas) {}
+: code_(std::move(code)), host_(host), call_(std::move(call)), gas_(gas)
+    {
+    // walk the wall once: mark real JUMPDEST positions, skip PUSH data
+    jumpdests_.assign(code_.size(), false);
+    for (std::size_t i = 0; i < code_.size();)
+    {
+        if (code_[i] == op::JUMPDEST) jumpdests_[i] = true;
+        i += 1 + (is_push(code_[i]) ? push_size(code_[i]) : 0);
+    }
+}
 
 ExecResult Evm::run() {
     while (step()) {}
@@ -31,6 +40,10 @@ static Gas gas_cost(Byte op) {
         case op::JUMP:                               return 8;   // "mid"
         case op::MLOAD: case op::MSTORE:
         case op::MSTORE8:                            return 3;
+        case op::EXP:                                return 10;  // + 50/exponent byte
+        case op::SHA3:                               return 30;  // + 6/word
+        case op::LOG0: case op::LOG1: case op::LOG2:
+        case op::LOG3: case op::LOG4:                return 375; // + 375/topic + 8/byte
         case op::SLOAD:                              return 2100;
         case op::SSTORE:                             return 20000; // (real rules are subtler)
         default:                                     return 3;   // PUSH/DUP/SWAP tier
@@ -42,8 +55,7 @@ static Gas gas_cost(Byte op) {
 // check 1: is dest even on the wall (the wall is fixed at construction)
 // check 2: is there a bookmark there
 void Evm::jump(const U256& dest) {
-    if (dest >= U256(code_.size()) ||
-        code_[(std::size_t)dest.low64()] != op::JUMPDEST) {
+    if (dest >= U256(code_.size()) || !jumpdests_[(std::size_t)dest.low64()]) {
         halt(StopReason::Halt, Error::InvalidJump);
         return;
     }
@@ -64,9 +76,16 @@ void Evm::mem_expand(const U256& off, std::size_t len) {
         return;
     }
     // rounding number of papers up if there's a remainder
-    std::size_t need = ((static_cast<std::size_t>(o) + len + 31) / 32) * 32;
+    std::size_t need = ((static_cast<std::size_t>(o) + len + 31) / 32) * 32; 
+
     // if we need more paper than we have, expand the desk
     if (need > memory_.size()) {
+        std::size_t old_w = memory_.size() / 32;
+        std::size_t new_w = need / 32;
+        // 3n + n^2/512
+        charge_gas(3*(Gas)(new_w - old_w)
+                 + (Gas)(new_w*new_w)/512 - (Gas)(old_w*old_w)/512);
+        if (halted_) return;
         memory_.resize(need);
     }
 }
@@ -107,6 +126,7 @@ bool Evm::step() {
                 halt(StopReason::Halt, Error::OutOfBounds);
                 return false;
             }
+            charge_gas(6 * (Gas)((len.low64() + 31) / 32)); // 6 per page pressed
             mem_expand(off, (std::size_t)len.low64());
             if (halted_) return false;         
             push(keccak256(&memory_[(std::size_t)off.low64()], (std::size_t)len.low64()));
@@ -137,6 +157,7 @@ bool Evm::step() {
                 halt(StopReason::Halt, Error::OutOfBounds);
                 return false;
             }
+            charge_gas(3 * (Gas)((len.low64() + 31) / 32)); // 3 per page copied
             mem_expand(dest, (std::size_t)len.low64());
             if (halted_) return false;
 
@@ -184,6 +205,7 @@ bool Evm::step() {
                 halt(StopReason::Halt, Error::OutOfBounds);
                 return false;
             }
+            charge_gas(3 * (Gas)((len.low64() + 31) / 32)); // 3 per page copied
             mem_expand(dest, (std::size_t)len.low64());
             if (halted_) return false;
 
@@ -341,6 +363,15 @@ bool Evm::step() {
         case op::EXP: {
             U256 base = pop();
             U256 e = pop();
+            unsigned eb = 0;
+            for (int b = 0; b < 32; ++b) {
+                if (byte_at(e, b)) { 
+                    eb = 32 - b; 
+                    break; 
+                }
+            }
+            charge_gas(50 * (Gas)eb); // 50 per exponent byte
+            if (halted_) return false;
             push(pow_u256(base, e));
             break;
         }
@@ -481,6 +512,29 @@ bool Evm::step() {
                 std::swap(stack_[sp_ - 1], stack_[sp_ - 1 - n]);
                 break;
             }
+            // clerk copies a desk slice (the announcement text) plus 0-4 topics slip
+            // posts it to the country's permanent event log
+            // stamped with this business's address
+            if (is_log(op_code)) {
+                unsigned n = op_code - op::LOG0; // how many topics (0..4)
+                U256 off = pop(), len = pop();
+                if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                    halt(StopReason::Halt, Error::OutOfBounds);
+                    return false;
+                }
+                charge_gas(375 + 375*(Gas)n + 8*(Gas)len.low64());
+                mem_expand(off, (std::size_t)len.low64());
+                if (halted_) return false;
+
+                Bytes data(memory_.begin() + (std::size_t)off.low64(), 
+                    memory_.begin() + (std::size_t)off.low64() + (std::size_t)len.low64());
+                
+                std::vector<U256> topics(n);
+                for (unsigned i = 0; i < n; ++i) topics[i] = pop(); // labels, off the pile
+
+                host_.log(call_.address, std::move(data), std::move(topics));
+                break;
+            }
             halt(StopReason::Halt, Error::InvalidOpcode);
             return false;
     }
@@ -510,6 +564,12 @@ void Evm::halt(StopReason r, Error e) {
     result_.error   = e;
     result_.gas_left = gas_;
     // result_.output filled by RETURN/REVERT cases, not here
+}
+
+// metered surcharge — same OOG rule as the flat fare
+void Evm::charge_gas(Gas g) {
+    gas_ -= g;
+    if (gas_ < 0) halt(StopReason::Halt, Error::OutOfGas);
 }
 
 } // namespace evm
