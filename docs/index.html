@@ -46,8 +46,13 @@
           word-break:break-all; }
   .wall .b { color:#79c0ff; }
   .wall .cur { background:var(--warn); color:#000; border-radius:3px; padding:0 2px; }
-  .wall .imm { color:#565f6b; }
+  .wall .imm { background:#30363d; color:#8b949e; border-radius:3px; }
   .wall .dst { color:var(--good); }
+  .legend { font-size:11px; color:var(--dim); margin-top:8px; }
+  .legend i { font-style:normal; padding:0 4px; border-radius:3px; }
+  .letter { font-family:ui-monospace,monospace; font-size:11.5px; color:var(--dim);
+            margin-bottom:8px; word-break:break-all; }
+  .letter b { color:var(--warn); font-weight:600; }
   .framelabel { font-size:12px; color:var(--dim); margin-bottom:8px; }
   .framelabel b { color:var(--fg); }
   .stack { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
@@ -108,8 +113,14 @@
   <div class="grid">
     <div class="panel">
       <h3>the wall <span style="text-transform:none">(bytecode)</span> — <span id="who"></span></h3>
+      <div class="letter" id="letter"></div>
       <div class="framelabel" id="framelabel"></div>
       <div class="wall" id="wall"></div>
+      <div class="legend">
+        <i class="cur" style="background:var(--warn);color:#000">finger</i> at pc ·
+        <i style="background:#30363d">grey</i> = push data (eaten, not executed) ·
+        <i style="color:var(--good)">green</i> = real jump bookmark
+      </div>
     </div>
     <div>
       <div class="panel" style="margin-bottom:14px">
@@ -200,11 +211,22 @@ const CAP = {
 
 // ---- state --------------------------------------------------------------------
 let Module_ = null, trace = [], cur = 0, timer = null, codeByAddr = {}, finalAccounts = [], result = null;
-let feedSeen = 0;
+let feedSeen = 0, SLOTS = {}, INITIAL = [], DESTS = {};
 
 const $ = id => document.getElementById(id);
 const short = a => NAMES[a] || a.slice(0,10)+"…";
 const shortHex = h => h.length > 18 ? h.slice(0,10)+"…"+h.slice(-6) : h;
+const slotName = (acct, k) => SLOTS[acct + ":" + k] || shortHex(k);
+
+// real jump bookmarks: a 0x5b byte only counts if it's not PUSH data
+function jumpdests(code) {
+  const s = new Set();
+  for (let i = 0; i < code.length;) {
+    if (code[i] === 0x5b) s.add(i);
+    i += 1 + ((code[i] >= 0x5f && code[i] <= 0x7f) ? code[i] - 0x5f : 0);
+  }
+  return s;
+}
 const dec = h => { try { return BigInt(h).toString(); } catch { return h; } };
 
 function captionFor(rec) {
@@ -218,7 +240,7 @@ function captionFor(rec) {
 
 function evText(e) {
   switch (e.t) {
-    case "sstore":  return `cabinet: ${short(e.a)} slot ${shortHex(e.k)} : ${dec(e.old)} → ${dec(e.v)}`;
+    case "sstore":  return `cabinet: ${short(e.a)} → ${slotName(e.a, e.k)} : ${dec(e.old)} → ${dec(e.v)}`;
     case "balance": return `cash moves: ${short(e.a)} balance ${dec(e.old)} → ${dec(e.v)}`;
     case "nonce":   return `nonce bump: ${short(e.a)}`;
     case "account": return `new business registered: ${short(e.a)}`;
@@ -235,15 +257,23 @@ function codeOf(addr){ return codeByAddr[addr] || []; }
 function render(i) {
   const rec = trace[i]; if (!rec) return;
   const code = codeOf(rec.a);
+  // PUSHn eats the next n bytes as data — show exactly which ones
+  const pm = rec.name.match(/^PUSH(\d+)$/);
+  const immEnd = pm ? rec.pc + 1 + (+pm[1]) : -1;
   const lo = Math.max(0, Math.min(rec.pc - 24, code.length - 56));
   const hi = Math.min(code.length, lo + 56);
   let w = "";
   for (let b = lo; b < hi; ++b) {
-    const cls = b === rec.pc ? "cur" : "b";
+    const cls = b === rec.pc ? "cur"
+              : (b > rec.pc && b < immEnd) ? "imm"
+              : (DESTS[rec.a] && DESTS[rec.a].has(b)) ? "dst" : "b";
     w += `<span class="${cls}">${code[b].toString(16).padStart(2,"0")}</span> `;
   }
   $("wall").innerHTML = w + (hi < code.length ? "…" : "");
   $("who").innerHTML  = `<b>${short(rec.a)}</b>  ·  clerk depth ${rec.d}  ·  pc ${rec.pc}  ·  <b>${rec.name}</b>`;
+  $("framelabel").textContent = rec.d > 0
+    ? `▸ inside a sub-request — this clerk's failure tears up only its own receipts`
+    : "";
 
   const s = rec.stack.slice(0,8).map((v,i) =>
       `<div class="${i===0?"top":""}">${shortHex(v)}</div>`).join("");
@@ -280,11 +310,22 @@ function render(i) {
 
 function renderFinal() {
   if (!finalAccounts.length) return;
-  let h = `<table class="acct"><tr><th>account</th><th>balance</th><th>storage ≠ 0</th></tr>`;
+  const before = {};
+  for (const a of INITIAL) before[a.addr] = a;
+  let h = `<table class="acct"><tr><th>account</th><th>eth (wei)</th><th>cabinet ≠ 0</th></tr>`;
   for (const a of finalAccounts) {
-    const st = a.storage.filter(x => BigInt(x.v) !== 0n)
-                        .map(x => `[${shortHex(x.k)}]=${dec(x.v)}`).join(" ");
-    h += `<tr><td>${short(a.addr)}</td><td>${dec(a.balance)}</td><td class="chg">${st}</td></tr>`;
+    const b0 = before[a.addr];
+    const balChg = b0 && b0.balance !== a.balance;
+    const st = a.storage.filter(x => BigInt(x.v) !== 0n || (b0 && b0.storage.some(y => y.k===x.k && BigInt(y.v)!==0n)))
+                        .map(x => {
+                          const pv = b0 && b0.storage.find(y=>y.k===x.k);
+                          const from = pv ? dec(pv.v) : "0";
+                          const changed = from !== dec(x.v);
+                          return `${slotName(a.addr,x.k)}: ${changed ? from+"→"+dec(x.v) : dec(x.v)}`;
+                        }).join("<br>");
+    h += `<tr><td>${short(a.addr)}</td>
+             <td class="${balChg?"chg":""}">${b0 ? dec(b0.balance)+"→" : ""}${dec(a.balance)}</td>
+             <td class="chg">${st}</td></tr>`;
   }
   $("accounts").innerHTML = h + "</table>";
 }
@@ -334,12 +375,19 @@ function load(id) {
   const scen = SCENARIOS[id];
   const out = JSON.parse(Module_.ccall("evm_run_scenario", "string", ["string"], [JSON.stringify(scen)]));
   trace = out.trace; result = out.result; finalAccounts = out.accounts || [];
-  codeByAddr = {};
-  for (const [a, acc] of Object.entries(scen.accounts || {}))
+  SLOTS = out.slots || {}; INITIAL = out.initial || [];
+  codeByAddr = {}; DESTS = {};
+  for (const [a, acc] of Object.entries(scen.accounts || {})) {
     codeByAddr[a] = (acc.code || "0x").slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
+    DESTS[a] = jumpdests(codeByAddr[a]);
+  }
   if (scen.exec.code) {   // ad-hoc code override
     codeByAddr[scen.exec.address] = scen.exec.code.slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
+    DESTS[scen.exec.address] = jumpdests(codeByAddr[scen.exec.address]);
   }
+  $("letter").innerHTML = scen.calldata_desc
+    ? `the letter: <b>${scen.calldata_desc}</b> <span style="color:var(--dim)">${(scen.exec.data||"0x").slice(0,74)}${(scen.exec.data||"").length>76?"…":""}</span>`
+    : "";
   cur = 0; render(0);
 }
 

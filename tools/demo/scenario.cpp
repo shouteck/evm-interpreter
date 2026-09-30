@@ -88,12 +88,25 @@ std::string run_scenario_json(const std::string& input) {
         for (auto& [k, v] : acc["storage"].o)
             host.sstore(addr, to_u256(k), to_u256(v.s));
     }
+    // display metadata: readable names for storage slots.
+    //   storage_auto {..., "name":"balanceOf[alice]"}   — computed mapping key
+    //   watch_slots  [{acct, holder, slot, name}]      — label only, no write
+    //   slot_names   [{acct, k, name}]                 — label a literal slot
+    std::map<std::string, std::string> slot_names;
+
     for (auto& e : t["storage_auto"].a) {
         Address acct = to_addr(e["acct"].s);
         known.insert(acct);
-        host.sstore(acct, mapping_slot(to_addr(e["holder"].s), to_u256(e["slot"].s)),
-                    to_u256(e["value"].s));
+        U256 key = mapping_slot(to_addr(e["holder"].s), to_u256(e["slot"].s));
+        host.sstore(acct, key, to_u256(e["value"].s));
+        if (e.has("name")) slot_names[hex_addr(acct) + ":" + hex_u(key)] = e["name"].s;
     }
+    for (auto& e : t["watch_slots"].a) {
+        U256 key = mapping_slot(to_addr(e["holder"].s), to_u256(e["slot"].s));
+        slot_names[hex_addr(to_addr(e["acct"].s)) + ":" + hex_u(key)] = e["name"].s;
+    }
+    for (auto& e : t["slot_names"].a)
+        slot_names[hex_addr(to_addr(e["acct"].s)) + ":" + hex_u(to_u256(e["k"].s))] = e["name"].s;
 
     if (t.has("block")) {
         auto& b = t["block"];
@@ -179,6 +192,30 @@ std::string run_scenario_json(const std::string& input) {
         return ev.str();
     };
 
+    // snapshot the world before execution (for before→after display)
+    std::ostringstream init; init << "[";
+    {
+        bool af = true;
+        for (auto& a : known) {
+            if (!af) init << ",";
+            af = false;
+            init << "{\"addr\":\"" << hex_addr(a)
+                 << "\",\"balance\":\"" << hex_u(host.balance(a))
+                 << "\",\"storage\":[";
+            bool sf = true;
+            auto sit = host.storage().find(a);
+            if (sit != host.storage().end())
+                for (auto& [k, v] : sit->second) {
+                    if (!sf) init << ",";
+                    sf = false;
+                    init << "{\"k\":\"" << hex_u(limbs_to_u256(k))
+                         << "\",\"v\":\"" << hex_u(limbs_to_u256(v)) << "\"}";
+                }
+            init << "]}";
+        }
+    }
+    init << "]";
+
     Evm vm(std::move(code), host, c, to_gas(x["gas"].s));
     vm.on_step = [&](const Evm& f, std::size_t opc, Byte o) {
         if (!first) tr << ",";
@@ -235,7 +272,17 @@ std::string run_scenario_json(const std::string& input) {
             }
         out << "]}";
     }
-    out << "],\"logs\":[";
+    out << "],\"initial\":" << init.str();
+
+    out << ",\"slots\":{";
+    bool nf = true;
+    for (auto& [k, v] : slot_names) {
+        if (!nf) out << ",";
+        nf = false;
+        out << "\"" << k << "\":\"" << v << "\"";
+    }
+
+    out << "},\"logs\":[";
     for (std::size_t i = 0; i < host.logs().size(); ++i) {
         if (i) out << ",";
         auto& lg = host.logs()[i];
