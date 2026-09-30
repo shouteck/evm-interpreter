@@ -99,7 +99,9 @@
     <button class="ghost" id="step">step →</button>
     <button class="ghost" id="nextEv">⏭ next event</button>
     <button class="ghost" id="reset">↺ reset</button>
-    <input type="range" id="speed" min="15" max="800" value="120" title="ms per step">
+    <span class="stat">speed</span>
+    <input type="range" id="speed" min="2" max="60" value="12" title="steps per second">
+    <span class="stat" id="speednum">12/s</span>
     <span class="stat" id="stat"></span>
   </div>
   <div class="caption" id="caption">press ▶ — or pick a story above</div>
@@ -308,7 +310,7 @@ function play(){
   timer = setInterval(() => {
     if (cur >= trace.length - 1) { finish(); return; }
     render(++cur);
-  }, +$("speed").value);
+  }, 1000 / +$("speed").value);
 }
 function stepOnce(){ pause(); if (cur < trace.length-1) render(++cur); else finish(); }
 function nextEvent(){
@@ -369,6 +371,10 @@ createEvm().then(M => {
   $("nextEv").onclick = nextEvent; $("reset").onclick = () => load(curId || "arith");
   $("runcustom").onclick = loadCustom;
   $("custom").addEventListener("keydown", e => { if (e.key === "Enter") loadCustom(); });
+  $("speed").oninput = e => {
+    $("speednum").textContent = e.target.value + "/s";
+    if (timer) { pause(); play(); }      // retime a running playback
+  };
   load("arith"); play();
 }).catch(e => { $("caption").textContent = "WASM failed to load: " + e; });
 </script>
