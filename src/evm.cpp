@@ -20,17 +20,43 @@ Evm::Evm(Bytes code, Host& host, CallContext call, Gas gas)
     }
 }
 
-ExecResult Evm::run() {
-    while (step()) {}
+ExecResult Evm::run(std::size_t step_cap) {
+    std::size_t cp = host_.checkpoint();   // frame-entry mark: revertable window
+    const Gas initial = gas_;
+    std::size_t steps = 0;
+    while (steps < step_cap && step()) ++steps;
+    if (!halted_) return result_;          // step-capped: caller decides what that means
+    if (result_.reason == StopReason::Revert) {
+        host_.revert(cp);                  // soft undo — gas spent, writes undone
+    } else if (result_.reason == StopReason::Halt && result_.error != Error::None) {
+        host_.revert(cp);                  // exceptional: everything undone,
+        gas_ = 0;                          // all gas burned, output discarded
+        result_.gas_left = 0;
+        result_.output.clear();
+    }
+    // settle the refund: min(refund, spent/2) — not on exceptional halts
+    if (refund_ > 0 && !(result_.reason == StopReason::Halt && result_.error != Error::None)) {
+        Gas r = std::min<Gas>(refund_, (initial - gas_) / 2);
+        gas_ += r;
+        result_.gas_left = gas_;
+    }
     return result_;
 }
 
 // the price list — one lookup
 static Gas gas_cost(Byte op) {
     switch (op) {
-        case op::STOP: case op::JUMPDEST:            return 0;
+        case op::STOP: case op::RETURN:
+        case op::REVERT:                             return 0;   // halting is free
+        case op::JUMPDEST:                           return 1;
         case op::PC: case op::MSIZE: case op::GAS:
-        case op::ADDRESS: /* ...very cheap tier */   return 2;
+        case op::ADDRESS: case op::ORIGIN: case op::CALLER:
+        case op::CALLVALUE: case op::CALLDATASIZE: case op::CODESIZE:
+        case op::GASPRICE: case op::RETURNDATASIZE: case op::POP:
+        case op::COINBASE: case op::TIMESTAMP: case op::NUMBER:
+        case op::PREVRANDAO: case op::GASLIMIT: case op::CHAINID:
+        case op::SELFBALANCE:                        return 2;   // "base" tier
+        case op::BLOCKHASH:                          return 20;
         case op::ADD: case op::SUB: case op::NOT:
         case op::LT: case op::GT: /* ... */          return 3;   // "verylow"
         case op::MUL: case op::DIV: case op::SDIV:
@@ -38,18 +64,21 @@ static Gas gas_cost(Byte op) {
         case op::SIGNEXTEND:                         return 5;   // "low"
         case op::ADDMOD: case op::MULMOD:
         case op::JUMP:                               return 8;   // "mid"
+        case op::JUMPI:                              return 10;
         case op::MLOAD: case op::MSTORE:
         case op::MSTORE8:                            return 3;
-        case op::EXP:                                return 10;  // + 50/exponent byte
+        case op::EXP:                                return 10;  // + 10/exponent byte (Constantinople)
         case op::SHA3:                               return 30;  // + 6/word
         case op::LOG0: case op::LOG1: case op::LOG2:
-        case op::LOG3: case op::LOG4:                return 375; // + 375/topic + 8/byte
-        case op::SLOAD:                              return 2100;
+        case op::LOG3: case op::LOG4:                return 0;   // metered in-arm: 375 + 375/topic + 8/byte
+        case op::SLOAD:                              return 50;  // Frontier schedule
+        case op::BALANCE: case op::EXTCODEHASH:      return 20;
+        case op::EXTCODESIZE: case op::EXTCODECOPY:  return 20;
         case op::CALL: case op::DELEGATECALL:
-        case op::STATICCALL:                         return 700;
+        case op::STATICCALL:                         return 40;  // + 9000 value + 25000 new acct
         case op::CREATE: case op::CREATE2:           return 32000;
-        case op::SELFDESTRUCT:                       return 5000;
-        case op::SSTORE:                             return 20000; // (real rules are subtler)
+        case op::SELFDESTRUCT:                       return 0;   // Frontier: suicide is free
+        case op::SSTORE:                             return 0;   // metered in-arm: 20000/5000 + refunds
         default:                                     return 3;   // PUSH/DUP/SWAP tier
     }
 }
@@ -69,6 +98,7 @@ void Evm::jump(const U256& dest) {
 
 // does the desk cover from off + 0 to off + len - 1?
 void Evm::mem_expand(const U256& off, std::size_t len) {
+    if (len == 0) return;              // an empty range touches no paper
     if ((off.l[1] | off.l[2] | off.l[3]) != 0) {
         halt(StopReason::Halt, Error::OutOfBounds);
         return;
@@ -197,6 +227,12 @@ bool Evm::step() {
             // 2. not enough cash to pay the business
             if (call_.depth >= 1024 || (value != U256() && host_.balance(call_.address) < value)) {
                 push(U256()); break;
+            }
+
+            // carrying cash costs extra; seeding a fresh business costs more
+            if (value != U256()) {
+                charge_gas(9000 + (host_.exists(callee) ? 0 : 25000));
+                if (halted_) return false;
             }
 
             // copying the input data from the desk to the child's letter
@@ -525,6 +561,10 @@ bool Evm::step() {
                 halt(StopReason::Halt, Error::StaticViolation); return false;
             }
             U256 key = pop(), v = pop();
+            U256 old = host_.sload(call_.address, key);
+            charge_gas((old == U256() && v != U256()) ? 20000 : 5000); // fresh vs dirty slot
+            if (halted_) return false;
+            if (v == U256() && old != U256()) refund_ += 15000;        // freeing a slot pays back
             host_.sstore(call_.address, key, v);
             break;
         }
@@ -614,12 +654,12 @@ bool Evm::step() {
             U256 e = pop();
             unsigned eb = 0;
             for (int b = 0; b < 32; ++b) {
-                if (byte_at(e, b)) { 
-                    eb = 32 - b; 
-                    break; 
+                if (byte_at(e, b)) {
+                    eb = 32 - b;
+                    break;
                 }
             }
-            charge_gas(50 * (Gas)eb); // 50 per exponent byte
+            charge_gas(10 * (Gas)eb); // 10 per exponent byte (Constantinople)
             if (halted_) return false;
             push(pow_u256(base, e));
             break;

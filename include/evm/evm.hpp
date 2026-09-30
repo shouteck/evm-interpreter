@@ -22,7 +22,7 @@ public:
 
     Evm(Bytes code, Host& host, CallContext call, Gas gas);
 
-    ExecResult run();              // step() until halted, return final result
+    ExecResult run(std::size_t step_cap = ~std::size_t(0)); // step() until halted or cap
     bool step();                   // execute one instruction; false once halted
 
     bool halted() const { return halted_; }
@@ -41,6 +41,7 @@ private:
     Host&       host_;     // phone line to the country
     CallContext call_;     // the visitor + their letter
     Gas         gas_;      // stamp budget
+    Gas         refund_ = 0;  // SSTORE clearings — credited back at frame end
 
     std::array<U256, MAX_STACK> stack_;
     std::size_t sp_ = 0;         // first empty slot; stack grows upward

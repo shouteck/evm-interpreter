@@ -34,3 +34,9 @@ add_executable(evm_tests
 )
 target_link_libraries(evm_tests PRIVATE evm)
 add_test(NAME evm_tests COMMAND evm_tests)
+
+# M4: official VMTests corpus runner (separate binary — it's a corpus sweep,
+# not a unit test; `evm_vectors` from the build dir)
+add_executable(evm_vectors tests/test_vectors.cpp)
+target_link_libraries(evm_vectors PRIVATE evm)
+target_include_directories(evm_vectors PRIVATE tests)

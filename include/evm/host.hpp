@@ -100,6 +100,7 @@ public:
     void revert(std::size_t cp) override;
 
     void set_balance(const Address& a, const U256& v) { balances_[a] = limbs_of(v); } // setup: unjournaled
+    void set_nonce(const Address& a, std::uint64_t n) { nonces_[a] = n; }
     void set_block(const BlockContext& b) { block_ = b; }
     void deploy(const Address& a, Bytes code) { code_[a] = std::move(code); }
     void set_blockhash(std::uint64_t n, const U256& h) { hashes_[n] = h; }

@@ -726,8 +726,8 @@ TEST(evm_gas) {
         vm.run();
         CHECK_EQ(vm.peek(0).low64(), 998ull);
     }
-    {   // SLOAD (2100) bankrupts a budget that survived the PUSH1
-        Evm vm(from_hex("0x600054"), host, CallContext{}, 2000);
+    {   // SLOAD (50, Frontier schedule) bankrupts a budget that survived the PUSH1
+        Evm vm(from_hex("0x600054"), host, CallContext{}, 50);
         vm.run();
         CHECK(vm.result().reason == StopReason::Halt);
         CHECK(vm.result().error == Error::OutOfGas);
