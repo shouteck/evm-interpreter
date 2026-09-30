@@ -35,6 +35,15 @@ const Bytes& InMemoryHost::code(const Address& a) const {
     return empty;
 }
 
+bool InMemoryHost::exists(const Address& a) const {
+    return balances_.count(a) || code_.count(a) || storage_.count(a) || nonces_.count(a);
+}
+
+U256 InMemoryHost::blockhash(std::uint64_t n) const {
+    if (auto it = hashes_.find(n); it != hashes_.end()) return it->second;
+    return U256();
+}
+
 bool InMemoryHost::transfer(const Address& from, const Address& to, const U256& value) {
     U256 fb = balance(from);
     if (fb < value) return false;                       // not enough cash — call fails
@@ -43,6 +52,29 @@ bool InMemoryHost::transfer(const Address& from, const Address& to, const U256& 
     balances_[from] = limbs_of(fb - value);
     balances_[to]   = limbs_of(balance(to) + value);
     return true;
+}
+
+std::uint64_t InMemoryHost::nonce(const Address& a) const {
+    if (auto it = nonces_.find(a); it != nonces_.end()) return it->second;
+    return 0;
+}
+
+void InMemoryHost::bump_nonce(const Address& a) {
+    journal_.push_back({JournalEntry::Nonce, a, {}, U256(nonce(a))});
+    ++nonces_[a];
+}
+
+void InMemoryHost::create_account(const Address& a) {
+    journal_.push_back({JournalEntry::Account, a, {}, {}});
+    nonces_.emplace(a, 0);
+}
+
+void InMemoryHost::install_code(const Address& a, Bytes code) {
+    code_[a] = std::move(code);   // journaled by the surrounding Account entry
+}
+
+void InMemoryHost::kill(const Address& self, const Address& beneficiary) {
+    transfer(self, beneficiary, balance(self));   // sweep the cash; journalled
 }
 
 // Pop receipts back down to `cp`, each restoring what it recorded.
@@ -65,6 +97,14 @@ void InMemoryHost::revert(std::size_t cp) {
                 break;
             case JournalEntry::Log:
                 logs_.pop_back();
+                break;
+            case JournalEntry::Nonce:
+                nonces_[e.addr] = e.old.low64();
+                break;
+            case JournalEntry::Account:          // business un-registers
+                nonces_.erase(e.addr);
+                code_.erase(e.addr);
+                storage_.erase(e.addr);
                 break;
         }
     }

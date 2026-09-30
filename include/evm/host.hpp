@@ -60,6 +60,15 @@ public:
     virtual const Bytes& code(const Address&) const = 0;                 // callee's wall
     virtual bool transfer(const Address& from, const Address& to,
                           const U256& value) = 0;                        // cash move; false if broke
+    virtual bool exists(const Address&) const = 0;                       // touched account?
+    virtual U256 blockhash(std::uint64_t n) const = 0;                   // recent-block lookup (0 outside window)
+
+    // --- CREATE/SELFDESTRUCT support ---
+    virtual std::uint64_t nonce(const Address&) const = 0;               // create-count, feeds addr derivation
+    virtual void bump_nonce(const Address&) = 0;
+    virtual void create_account(const Address&) = 0;                     // register a fresh business
+    virtual void install_code(const Address&, Bytes) = 0;                // init code's return becomes the wall
+    virtual void kill(const Address& self, const Address& beneficiary) = 0;
 
     // Speculative state: every write pushes an undo receipt.
     // checkpoint() = current journal height; revert() replays backwards.
@@ -80,12 +89,20 @@ public:
 
     const Bytes& code(const Address& a) const override;
     bool transfer(const Address& from, const Address& to, const U256& value) override;
+    bool exists(const Address& a) const override;
+    U256 blockhash(std::uint64_t n) const override;
+    std::uint64_t nonce(const Address& a) const override;
+    void bump_nonce(const Address& a) override;
+    void create_account(const Address& a) override;
+    void install_code(const Address& a, Bytes code) override;
+    void kill(const Address& self, const Address& beneficiary) override;
     std::size_t checkpoint() override { return journal_.size(); }
     void revert(std::size_t cp) override;
 
     void set_balance(const Address& a, const U256& v) { balances_[a] = limbs_of(v); } // setup: unjournaled
     void set_block(const BlockContext& b) { block_ = b; }
     void deploy(const Address& a, Bytes code) { code_[a] = std::move(code); }
+    void set_blockhash(std::uint64_t n, const U256& h) { hashes_[n] = h; }
     const std::vector<LogRecord>& logs() const { return logs_; }
 
 private:
@@ -95,15 +112,17 @@ private:
 
     // One undo receipt — records what a write *was* so revert() can put it back.
     struct JournalEntry {
-        enum Kind { Store, Balance, Log } kind;
+        enum Kind { Store, Balance, Log, Nonce, Account } kind;
         Address addr;
-        U256    key;    // cabinet slot (Store only)
-        U256    old;    // previous value (Store/Balance)
+        U256    key;       // cabinet slot (Store only)
+        U256    old;       // previous value (Store/Balance); prev nonce low64 (Nonce)
     };
 
     std::map<Address, Limbs> balances_;
     std::map<Address, std::map<Limbs, Limbs>> storage_;
     std::map<Address, Bytes> code_;
+    std::map<Address, std::uint64_t> nonces_;
+    std::map<std::uint64_t, U256> hashes_;
     std::vector<LogRecord> logs_;
     std::vector<JournalEntry> journal_;
     BlockContext block_{};

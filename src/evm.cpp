@@ -47,6 +47,8 @@ static Gas gas_cost(Byte op) {
         case op::SLOAD:                              return 2100;
         case op::CALL: case op::DELEGATECALL:
         case op::STATICCALL:                         return 700;
+        case op::CREATE: case op::CREATE2:           return 32000;
+        case op::SELFDESTRUCT:                       return 5000;
         case op::SSTORE:                             return 20000; // (real rules are subtler)
         default:                                     return 3;   // PUSH/DUP/SWAP tier
     }
@@ -90,6 +92,39 @@ void Evm::mem_expand(const U256& off, std::size_t len) {
         if (halted_) return;
         memory_.resize(need);
     }
+}
+
+// CREATE's address: last 20 bytes of keccak(rlp([sender, nonce]))
+static Address create_address(const Address& sender, std::uint64_t nonce) {
+    Bytes p; p.push_back(0x94);                       // RLP: 20-byte string
+    p.insert(p.end(), sender.begin(), sender.end());
+    if (nonce == 0)         p.push_back(0x80);        // empty string
+    else if (nonce < 0x80)  p.push_back((Byte)nonce); // single byte < 128
+    else {
+        Bytes nb;
+        for (std::uint64_t n = nonce; n; n >>= 8) nb.insert(nb.begin(), (Byte)(n & 0xff));
+        p.push_back((Byte)(0x80 + nb.size()));
+        p.insert(p.end(), nb.begin(), nb.end());
+    }
+    Bytes enc; enc.push_back((Byte)(0xc0 + p.size())); // RLP short list
+    enc.insert(enc.end(), p.begin(), p.end());
+    Byte h[32]; keccak256(enc.data(), enc.size(), h);
+    Address a; std::copy(h + 12, h + 32, a.begin());
+    return a;
+}
+
+// CREATE2's address: last 20 of keccak(0xff ++ sender ++ salt ++ keccak(init))
+static Address create2_address(const Address& sender, const U256& salt, const Bytes& init) {
+    Byte ih[32]; keccak256(init.data(), init.size(), ih);
+    Byte sbuf[32]; to_bytes32(salt, sbuf);
+    Bytes m; m.reserve(85);
+    m.push_back(0xff);
+    m.insert(m.end(), sender.begin(), sender.end());
+    m.insert(m.end(), sbuf, sbuf + 32);
+    m.insert(m.end(), ih, ih + 32);
+    Byte h[32]; keccak256(m.data(), m.size(), h);
+    Address a; std::copy(h + 12, h + 32, a.begin());
+    return a;
 }
 
 static U256 pow_u256(U256 base, U256 exp) {
@@ -202,6 +237,59 @@ bool Evm::step() {
             push(U256(ok ? 1 : 0));
             break;
         }
+        // founding a new business: the desk slice is INIT code — the child
+        // runs it, and whatever it RETURNs gets hung on the new wall.
+        // CREATE:  addr = keccak(rlp(sender, nonce))[12:]
+        // CREATE2: addr = keccak(0xff ++ sender ++ salt ++ keccak(init))[12:]
+        case op::CREATE: case op::CREATE2: {
+            if (call_.is_static) {   // can't open a business in read-only mode
+                halt(StopReason::Halt, Error::StaticViolation); return false;
+            }
+            U256 value = pop(), off = pop(), len = pop();
+            U256 salt;
+            if (op_code == op::CREATE2) salt = pop();
+            if ((len.l[1]|len.l[2]|len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds); return false;
+            }
+            if (op_code == op::CREATE2)
+                charge_gas(6 * (Gas)((len.low64() + 31) / 32));   // hashing the init
+            mem_expand(off, (std::size_t)len.low64());
+            if (halted_) return false;
+
+            if (call_.depth >= 1024 || (value != U256() && host_.balance(call_.address) < value)) {
+                push(U256()); break;                              // refusal, not a fault
+            }
+
+            Bytes init(memory_.begin() + (std::size_t)off.low64(),
+                       memory_.begin() + (std::size_t)(off + len).low64());
+            Address na = op_code == op::CREATE2
+                ? create2_address(call_.address, salt, init)
+                : create_address(call_.address, host_.nonce(call_.address));
+            host_.bump_nonce(call_.address);          // burns the nonce even if init fails
+
+            std::size_t cp = host_.checkpoint();
+            host_.create_account(na);
+            if (value != U256()) host_.transfer(call_.address, na, value);
+
+            CallContext child{ na, call_.address, call_.origin, value,
+                               Bytes{}, call_.depth + 1, call_.is_static };
+            Gas fwd = gas_ - gas_/64;
+            gas_ -= fwd;
+            Evm kid(std::move(init), host_, std::move(child), fwd);
+            ExecResult r = kid.run();
+            gas_ += r.gas_left;
+            returndata_ = r.output;
+
+            bool ok = r.reason == StopReason::Return || r.reason == StopReason::Stop;
+            if (ok) {
+                host_.install_code(na, r.output);     // the return value IS the wall
+                push(from_bytes(na.data(), na.size()));
+            } else {
+                host_.revert(cp);
+                push(U256());                         // failed birth -> zero address
+            }
+            break;
+        }
         case op::SHA3: {
             U256 off = pop(), len = pop();
             if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
@@ -231,6 +319,70 @@ bool Evm::step() {
             Address addr;
             std::copy(buf + 12, buf + 32, addr.begin());
             push(host_.balance(addr));
+            break;
+        }
+        // looking over the fence: another business's wall size/hash/copy
+        case op::EXTCODESIZE: {
+            U256 a = pop();
+            Byte buf[32] = {}; to_bytes32(a, buf);
+            Address addr; std::copy(buf + 12, buf + 32, addr.begin());
+            push(U256(host_.code(addr).size()));
+            break;
+        }
+        case op::EXTCODEHASH: {
+            U256 a = pop();
+            Byte buf[32] = {}; to_bytes32(a, buf);
+            Address addr; std::copy(buf + 12, buf + 32, addr.begin());
+            if (!host_.exists(addr)) { push(U256()); break; }       // no such business
+            Byte h[32]; keccak256(host_.code(addr).data(), host_.code(addr).size(), h);
+            push(from_bytes(h, 32));                               // empty wall -> keccak("")
+            break;
+        }
+        case op::EXTCODECOPY: {
+            U256 a = pop(), dest = pop(), off = pop(), len = pop();
+            if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds); return false;
+            }
+            charge_gas(3 * (Gas)((len.low64() + 31) / 32));
+            mem_expand(dest, (std::size_t)len.low64());
+            if (halted_) return false;
+            Byte buf[32] = {}; to_bytes32(a, buf);
+            Address addr; std::copy(buf + 12, buf + 32, addr.begin());
+            const Bytes& c = host_.code(addr);
+            std::size_t n = (std::size_t)len.low64(), copy = 0;
+            if (off < U256(c.size()))
+                copy = std::min<std::size_t>(n, c.size() - (std::size_t)off.low64());
+            std::size_t d = (std::size_t)dest.low64();
+            for (std::size_t j = 0; j < copy; ++j) memory_[d + j] = c[(std::size_t)off.low64() + j];
+            for (std::size_t j = copy; j < n; ++j)  memory_[d + j] = 0;
+            break;
+        }
+        // the gazette's archive: hash of a recent block (0 outside the window)
+        case op::BLOCKHASH: {
+            push(host_.blockhash(pop().low64()));
+            break;
+        }
+        // the last sub-call's report, as its own buffer
+        case op::RETURNDATASIZE: {
+            push(U256(returndata_.size()));
+            break;
+        }
+        case op::RETURNDATACOPY: {
+            U256 dest = pop(), off = pop(), len = pop();
+            if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds); return false;
+            }
+            // reading past the report's end aborts the frame
+            if (off > U256(returndata_.size()) ||
+                U256(returndata_.size()) - off < len) {
+                halt(StopReason::Halt, Error::OutOfBounds); return false;
+            }
+            charge_gas(3 * (Gas)((len.low64() + 31) / 32));
+            mem_expand(dest, (std::size_t)len.low64());
+            if (halted_) return false;
+            std::copy_n(returndata_.begin() + (std::size_t)off.low64(),
+                        (std::size_t)len.low64(),
+                        memory_.begin() + (std::size_t)dest.low64());
             break;
         }
         case op::CODECOPY: {
@@ -330,6 +482,18 @@ bool Evm::step() {
             result_.output.assign(memory_.begin() + off.low64(),
                 memory_.begin() + off.low64() + len.low64());
             halt(StopReason::Revert);
+            return false;
+        }
+        // closing up shop: sweep the cash to the beneficiary, done for the day
+        case op::SELFDESTRUCT: {
+            if (call_.is_static) {
+                halt(StopReason::Halt, Error::StaticViolation); return false;
+            }
+            U256 b = pop();
+            Byte buf[32] = {}; to_bytes32(b, buf);
+            Address ben; std::copy(buf + 12, buf + 32, ben.begin());
+            host_.kill(call_.address, ben);
+            halt(StopReason::Stop);
             return false;
         }
         // conditional jump

@@ -642,6 +642,70 @@ TEST(evm_call) {
     }
 }
 
+// ------------------------------------------------------------------
+// Surface sweep: EXTCODE*, BLOCKHASH, RETURNDATA*, CREATE, SELFDESTRUCT
+// ------------------------------------------------------------------
+
+TEST(evm_surface) {
+    Address b{}; b.fill(0x42);
+    {   // EXTCODESIZE reads another wall; BLOCKHASH reads the archive
+        InMemoryHost host;
+        host.deploy(b, from_hex("0x00"));               // 1-byte wall
+        host.set_blockhash(7, U256(0xdead));
+        Evm vm(from_hex("0x73" "4242424242424242424242424242424242424242"
+                        "3b"                             // EXTCODESIZE B -> 1
+                        "6007" "40"                      // BLOCKHASH 7
+                        "00"), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.peek(0) == U256(0xdead));
+        CHECK(vm.peek(1) == U256(1));
+    }
+    {   // child returns 42 -> RETURNDATASIZE/RETURNDATACOPY shuttle it out
+        InMemoryHost host;
+        host.deploy(b, from_hex("0x602a600052" "60206000f3"));
+        Evm vm(from_hex("0x6020" "6000" "6000" "6000" "6000"
+                        "73" "4242424242424242424242424242424242424242"
+                        "61ffff" "f1"                    // CALL B
+                        "50"                             // drop the flag
+                        "3d"                             // RETURNDATASIZE -> 32
+                        "6020" "6000" "6000" "3e"        // RETURNDATACOPY(0,0,32)
+                        "6000" "51"                      // MLOAD 0 -> 42
+                        "00"), host, CallContext{}, 200000);
+        vm.run();
+        CHECK(vm.peek(0) == U256(0x2a));
+        CHECK(vm.peek(1) == U256(32));
+    }
+    {   // CREATE: init code in memory returns the runtime code -> deployed
+        InMemoryHost host;
+        // init: CODECOPY payload@12..22 to desk, RETURN it (its return IS the wall)
+        const std::string init = "600a600c600039" "600a6000f3"
+                                 + std::string("6001600055") + "0000000000";
+        const std::string word = std::string(20, '0') + init;   // init sits at mem[10..32)
+        Evm vm(from_hex("0x7f" + word +
+                        "6000" "52"                            // MSTORE init @ 0
+                        "6016" "600a" "6000" "f0"              // CREATE(0, 10, 22)
+                        "00"), host, CallContext{}, 200000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        Byte buf[32] = {}; to_bytes32(vm.peek(0), buf);
+        Address newborn; std::copy(buf + 12, buf + 32, newborn.begin());
+        CHECK(newborn != Address{});                            // got a real address
+        CHECK(host.code(newborn) == from_hex("0x6001600055" "0000000000"));
+    }
+    {   // SELFDESTRUCT: cash sweeps to the beneficiary, frame stops
+        InMemoryHost host;
+        Address a{}; a.fill(0x11);
+        host.set_balance(a, U256(5));
+        CallContext c; c.address = a;
+        Evm vm(from_hex("0x73" "4242424242424242424242424242424242424242" "ff"),
+               host, c, 100000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Stop);
+        CHECK(host.balance(a) == U256());
+        CHECK(host.balance(b) == U256(5));
+    }
+}
+
 TEST(evm_gas) {
     InMemoryHost host;
 
