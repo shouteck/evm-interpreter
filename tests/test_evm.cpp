@@ -563,6 +563,85 @@ TEST(evm_log) {
     }
 }
 
+// ------------------------------------------------------------------
+// CALL: nested execution through the host. Push order for operands:
+// out_len, out_off, in_len, in_off, value, to, gas (gas ends on top).
+// ------------------------------------------------------------------
+
+TEST(evm_call) {
+    // callee B's wall: MSTORE 42 @ 0, RETURN 32 bytes
+    Address b{}; b.fill(0x42);
+
+    const std::string parent_code =
+        "0x6020" "6000" "6000" "6000" "6000"  // out_len=32 out_off=0 in_len=0 in_off=0 value=0
+        "73" "4242424242424242424242424242424242424242"  // PUSH20 B
+        "61ffff"                                   // PUSH2 0xffff gas
+        "f1"                                       // CALL
+        "6000" "51"                                // MLOAD 0 -> the report
+        "6020" "6000" "f3";                        // RETURN(0, 32)
+
+    {   // success: flag 1, child's report readable on the desk
+        InMemoryHost host;
+        host.deploy(b, from_hex("0x602a600052" "60206000f3"));
+        Evm vm(from_hex(parent_code), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.result().reason == StopReason::Return);
+        CHECK(vm.peek(1) == U256(1));                  // success flag under the report
+        CHECK(vm.peek(0) == U256(0x2a));               // MLOAD pulled it off the desk
+        CHECK_EQ(vm.result().output.size(), 32u);
+        CHECK(vm.result().output[31] == 0x2a);         // the 42 came home
+    }
+    {   // child SSTOREs then REVERTs: flag 0, the write unwinds
+        InMemoryHost host;
+        host.deploy(b, from_hex("0x6001600055" "60006000fd"));
+        Evm vm(from_hex(parent_code), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.peek(1) == U256());                   // failure flag
+        CHECK(host.sload(b, U256()) == U256());        // slot 0 never committed
+    }
+    {   // dead end: callee has no code — empty wall, instant STOP, flag 1
+        InMemoryHost host;
+        Evm vm(from_hex(parent_code), host, CallContext{}, 100000);
+        vm.run();
+        CHECK(vm.peek(1) == U256(1));
+        CHECK(vm.result().output[31] == 0);            // no report
+    }
+    {   // DELEGATECALL: B's wall runs in A's office — writes land in A's
+        // cabinet, and CALLER passes through (Alice, not A)
+        InMemoryHost host;
+        Address a{}; a.fill(0x11);                     // the office
+        Address alice{}; alice.fill(0xaa);
+        CallContext c; c.address = a; c.caller = alice;
+        // B's wall: SSTORE(0, 42); SSTORE(1, CALLER); RETURN(0,0)
+        host.deploy(b, from_hex("0x602a600055" "33600155" "60006000f3"));
+        const std::string dcall =
+            "0x6020" "6000" "6000" "6000"           // out_len out_off in_len in_off
+            "73" "4242424242424242424242424242424242424242"  // PUSH20 B
+            "61ffff" "f4"                            // gas, DELEGATECALL
+            "6000" "51" "6020" "6000" "f3";
+        Evm vm(from_hex(dcall), host, c, 200000);
+        vm.run();
+        CHECK(vm.peek(1) == U256(1));
+        CHECK(host.sload(a, U256()) == U256(42));      // A's cabinet got the write
+        CHECK(host.sload(b, U256()) == U256());        // B's cabinet untouched
+        U256 alice_v = from_bytes(alice.data(), alice.size());
+        CHECK(host.sload(a, U256(1)) == alice_v);      // caller = Alice, not A
+    }
+    {   // STATICCALL: child's SSTORE is a hard fault — flag 0, nothing written
+        InMemoryHost host;
+        host.deploy(b, from_hex("0x602a600055" "60006000f3"));
+        const std::string scall =
+            "0x6020" "6000" "6000" "6000"
+            "73" "4242424242424242424242424242424242424242"
+            "61ffff" "fa"                            // gas, STATICCALL
+            "6000" "51" "6020" "6000" "f3";
+        Evm vm(from_hex(scall), host, CallContext{}, 200000);
+        vm.run();
+        CHECK(vm.peek(1) == U256());                   // failure flag
+        CHECK(host.sload(b, U256()) == U256());        // write never happened
+    }
+}
+
 TEST(evm_gas) {
     InMemoryHost host;
 

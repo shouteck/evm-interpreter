@@ -45,6 +45,8 @@ static Gas gas_cost(Byte op) {
         case op::LOG0: case op::LOG1: case op::LOG2:
         case op::LOG3: case op::LOG4:                return 375; // + 375/topic + 8/byte
         case op::SLOAD:                              return 2100;
+        case op::CALL: case op::DELEGATECALL:
+        case op::STATICCALL:                         return 700;
         case op::SSTORE:                             return 20000; // (real rules are subtler)
         default:                                     return 3;   // PUSH/DUP/SWAP tier
     }
@@ -120,6 +122,86 @@ bool Evm::step() {
         case op::POP:
             pop();
             break;
+        // the call family — same machinery, different envelope plumbing:
+        // CALL:        child IS the callee   (address=callee, caller=us, value=operand)
+        // DELEGATECALL: callee's WALL in OUR office (address stays us, caller/value pass through)
+        // STATICCALL:  CALL + read-only flag — writes halt the frame
+        case op::CALL: case op::DELEGATECALL: case op::STATICCALL: {
+            const bool delegate = (op_code == op::DELEGATECALL);
+            const bool staticc  = (op_code == op::STATICCALL);
+            U256 gas = pop(), to = pop();
+            U256 value;                                        // delegate/static carry no cash operand
+            if (!delegate && !staticc) value = pop();
+            U256 in_offset = pop(), in_len = pop(), out_offset = pop(), out_len = pop();
+
+            if ((in_len.l[1]|in_len.l[2]|in_len.l[3]) != 0 ||
+                (out_len.l[1]|out_len.l[2]|out_len.l[3]) != 0) {
+                halt(StopReason::Halt, Error::OutOfBounds); return false;
+            }
+
+            mem_expand(in_offset,  (std::size_t)in_len.low64());
+            mem_expand(out_offset, (std::size_t)out_len.low64());
+            if (halted_) return false;
+
+            Byte tbuf[32];
+            to_bytes32(to, tbuf);
+
+            Address callee;
+            // copy the last 20 bytes of tbuf into callee from paper format
+            std::copy(tbuf+12, tbuf+32, callee.begin());
+
+            // read-only propagates: a static parent's children are static too
+            bool child_static = call_.is_static || staticc;
+
+            // cash inside a read-only frame is a hard fault, not a refusal
+            if (child_static && value != U256()) {
+                halt(StopReason::Halt, Error::StaticViolation); return false;
+            }
+
+            // 1. too many nested calls
+            // 2. not enough cash to pay the business
+            if (call_.depth >= 1024 || (value != U256() && host_.balance(call_.address) < value)) {
+                push(U256()); break;
+            }
+
+            // copying the input data from the desk to the child's letter
+            Bytes in(memory_.begin() + (std::size_t)in_offset.low64(), memory_.begin() + (std::size_t)(in_offset + in_len).low64());
+
+            CallContext child = delegate
+                ? CallContext{ call_.address, call_.caller, call_.origin,
+                               call_.call_value, std::move(in), call_.depth + 1, child_static }
+                : CallContext{ callee, call_.address, call_.origin,
+                               value, std::move(in), call_.depth + 1, child_static };
+
+            // bookmark the receipt's stack current height before the child touches the world
+            std::size_t cp = host_.checkpoint();
+
+            // the cash move from caller to callee (delegatecall never moves cash)
+            if (value != U256()) host_.transfer(call_.address, callee, value);
+
+            // a call may forward at most 63/64 of parent's remaining gas
+            Gas fwd = std::min<Gas>((Gas)gas.low64(), gas_ - gas_/64);
+            gas_ -= fwd;
+            Evm kid(Bytes(host_.code(callee)), host_, std::move(child), fwd);
+            ExecResult r = kid.run();
+
+            // unused stamps come home
+            gas_ += r.gas_left;
+
+            bool ok = r.reason == StopReason::Return || r.reason == StopReason::Stop;
+            if (!ok) {
+                // undo the receipts
+                host_.revert(cp);
+            }
+
+            returndata_ = r.output;
+
+            // copy report onto the desk, clipped to out_len
+            std::size_t n = std::min<std::size_t>(r.output.size(), (std::size_t)out_len.low64());
+            std::copy_n(r.output.begin(), n, memory_.begin() + (std::size_t)out_offset.low64());
+            push(U256(ok ? 1 : 0));
+            break;
+        }
         case op::SHA3: {
             U256 off = pop(), len = pop();
             if ((len.l[1] | len.l[2] | len.l[3]) != 0) {
@@ -275,6 +357,9 @@ bool Evm::step() {
         case op::JUMPDEST: 
             break;
         case op::SSTORE: {
+            if (call_.is_static) {   // read-only frame: cabinet is off-limits
+                halt(StopReason::Halt, Error::StaticViolation); return false;
+            }
             U256 key = pop(), v = pop();
             host_.sstore(call_.address, key, v);
             break;
@@ -516,6 +601,9 @@ bool Evm::step() {
             // posts it to the country's permanent event log
             // stamped with this business's address
             if (is_log(op_code)) {
+                if (call_.is_static) {   // read-only frame: no posting
+                    halt(StopReason::Halt, Error::StaticViolation); return false;
+                }
                 unsigned n = op_code - op::LOG0; // how many topics (0..4)
                 U256 off = pop(), len = pop();
                 if ((len.l[1] | len.l[2] | len.l[3]) != 0) {

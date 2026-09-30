@@ -29,6 +29,7 @@ enum class Error {
     InvalidOpcode,
     InvalidJump,     // JUMP/JUMPI to a non-JUMPDEST
     OutOfBounds,     // memory offset doesn't fit in size_t
+    StaticViolation, // state write attempted inside a STATICCALL frame
 };
 
 struct ExecResult {
@@ -58,6 +59,7 @@ inline const char* to_string(Error e) {
         case Error::InvalidOpcode:  return "invalid opcode";
         case Error::InvalidJump:    return "invalid jump destination";
         case Error::OutOfBounds:    return "offset out of bounds";
+        case Error::StaticViolation: return "state write in static context";
     }
     return "?";
 }

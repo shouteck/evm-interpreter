@@ -24,11 +24,13 @@ struct BlockContext {
 
 // The visitor: who arrived at this office, carrying what.
 struct CallContext {
-    Address address{};      // this office (ADDRESS)
-    Address caller{};       // who sent us (CALLER)
-    Address origin{};       // who started the whole chain (ORIGIN)
-    U256    call_value;     // wei attached (CALLVALUE)
-    Bytes   calldata;       // the letter (CALLDATA*)
+    Address  address{};     // this office (ADDRESS)
+    Address  caller{};      // who sent us (CALLER)
+    Address  origin{};      // who started the whole chain (ORIGIN)
+    U256     call_value;    // wei attached (CALLVALUE)
+    Bytes    calldata;      // the letter (CALLDATA*)
+    unsigned depth = 0;     // how deep in the call chain (limit 1024)
+    bool     is_static = false;  // read-only frame: SSTORE/LOG/etc. halt inside
 };
 
 // One notice on the country's bulletin board (LOG0..LOG4).
@@ -53,6 +55,17 @@ public:
     virtual void sstore(const Address&, const U256& key, const U256& value) = 0;
     virtual void log(const Address&, Bytes data, std::vector<U256> topics) = 0;
     virtual BlockContext block() const = 0;
+
+    // --- CALL support ---
+    virtual const Bytes& code(const Address&) const = 0;                 // callee's wall
+    virtual bool transfer(const Address& from, const Address& to,
+                          const U256& value) = 0;                        // cash move; false if broke
+
+    // Speculative state: every write pushes an undo receipt.
+    // checkpoint() = current journal height; revert() replays backwards.
+    // Commit is implicit — entries stay, merging into the parent's speculation.
+    virtual std::size_t checkpoint() = 0;
+    virtual void revert(std::size_t cp) = 0;
 };
 
 // Flat in-memory world — enough for execution-only scope.
@@ -65,8 +78,14 @@ public:
     void log(const Address& a, Bytes data, std::vector<U256> topics) override;
     BlockContext block() const override { return block_; }
 
-    void set_balance(const Address& a, const U256& v) { balances_[a] = limbs_of(v); }
+    const Bytes& code(const Address& a) const override;
+    bool transfer(const Address& from, const Address& to, const U256& value) override;
+    std::size_t checkpoint() override { return journal_.size(); }
+    void revert(std::size_t cp) override;
+
+    void set_balance(const Address& a, const U256& v) { balances_[a] = limbs_of(v); } // setup: unjournaled
     void set_block(const BlockContext& b) { block_ = b; }
+    void deploy(const Address& a, Bytes code) { code_[a] = std::move(code); }
     const std::vector<LogRecord>& logs() const { return logs_; }
 
 private:
@@ -74,9 +93,19 @@ private:
 
     static Limbs limbs_of(const U256& v) { return {v.l[0], v.l[1], v.l[2], v.l[3]}; }
 
+    // One undo receipt — records what a write *was* so revert() can put it back.
+    struct JournalEntry {
+        enum Kind { Store, Balance, Log } kind;
+        Address addr;
+        U256    key;    // cabinet slot (Store only)
+        U256    old;    // previous value (Store/Balance)
+    };
+
     std::map<Address, Limbs> balances_;
     std::map<Address, std::map<Limbs, Limbs>> storage_;
+    std::map<Address, Bytes> code_;
     std::vector<LogRecord> logs_;
+    std::vector<JournalEntry> journal_;
     BlockContext block_{};
 };
 

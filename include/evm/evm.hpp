@@ -49,6 +49,7 @@ private:
 
     ExecResult  result_{};
     bool        halted_ = false;
+    Bytes       returndata_;   // last sub-call's report (RETURNDATA*)
 
     void push(const U256& v);
     U256 pop();
