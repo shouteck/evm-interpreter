@@ -80,7 +80,7 @@ tests/        harness + smoke suite
 
 - [x] M0 — scaffold, harness, skeletons, smoke tests green
 - [x] M1 — `uint256`: 4×u64 arithmetic, signed variants, addmod/mulmod
-- [ ] M2 — core interpreter: stack/arith done; memory/flow/storage + gas left
-- [ ] M3 — context opcodes: calldata, block fields, SHA3, LOG
+- [x] M2 — core interpreter: stack/arith, memory/flow/storage, gas
+- [x] M3 — context opcodes, calldata, block fields, SHA3/keccak, LOG, metered gas
 - [ ] M4 — official `ethereum/tests` vectors + perf pass + writeup
 - [ ] Stretch: CALL family, wasm demo, tracer UI
