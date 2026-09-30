@@ -3,9 +3,22 @@
 
 #include <ostream>
 #include <stdexcept>
+#if !defined(__SIZEOF_INT128__)
 #include <intrin.h>
+#endif
 
 namespace evm {
+
+// 64x64 -> 128 multiply: __int128 where the compiler has it, MSVC's intrinsic otherwise
+static inline std::uint64_t mul128(std::uint64_t a, std::uint64_t b, std::uint64_t* hi) {
+#if defined(__SIZEOF_INT128__)
+    unsigned __int128 p = (unsigned __int128)a * b;
+    *hi = (std::uint64_t)(p >> 64);
+    return (std::uint64_t)p;
+#else
+    return _umul128(a, b, hi);
+#endif
+}
 
 // ------------------------------------------------------------------
 // M1 is yours: implement these. Everything is currently a stub that
@@ -97,7 +110,7 @@ U256 operator*(const U256& a, const U256& b) {
         uint64_t carry = 0;
         for (int j = 0; j + i < 4; ++j) {
             uint64_t hi;
-            uint64_t lo = _umul128(a.l[i], b.l[j], &hi);
+            uint64_t lo = mul128(a.l[i], b.l[j], &hi);
             uint64_t s = r.l[i + j] + lo;
             uint64_t c = (s < r.l[i + j]);
             s += carry;
@@ -337,10 +350,14 @@ int bit_length(const U256& a) {
     for (int i = 3; i >= 0; --i) {
         uint64_t x = a.l[i];
         if (x == 0) continue;
-        
+
+#if defined(__GNUC__) || defined(__clang__)
+        return i * 64 + (64 - __builtin_clzll(x));
+#else
         unsigned long idx;
         _BitScanReverse64(&idx, a.l[i]);
         return i * 64 + idx + 1;
+#endif
     }
     
     return 0;

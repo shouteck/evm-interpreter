@@ -11,6 +11,11 @@
 - Build: `build.bat` (calls vcvars, configures Ninja once, then builds)
 - Test: `build.bat test` (ctest)
 - Run bytecode: `build\evm_run.exe 0x6001600101` or `evm_run file.hex`
+- VMTests corpus: `build\evm_vectors.exe tests\fixtures\vmtests` (Frontier-era schedule; vmPerformance/vmRandomTest excluded from sweeps)
+- Demo scenario JSON: `build\evm_scenario.exe tools\demo\scenarios\<name>.json`
+- WASM demo: `build_wasm.bat` (emsdk at `%USERPROFILE%\emsdk`; node/python paths pinned inside) → `docs/evm.js` + `docs/evm.wasm`
+- solc for demo contracts: 0.8.19, `--evm-version paris` (no PUSH0; Frontier ISA) — `tools/demo/contracts.sol`
+- The gas schedule is Frontier (SLOAD 50, CALL 40, SELFDESTRUCT 0) — that's what the legacy corpus encodes. Changing it will fail fixtures.
 
 ## Conventions
 

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include "evm/types.hpp"
 #include "evm/uint256.hpp"
 #include "evm/host.hpp"
@@ -28,12 +29,19 @@ public:
     bool halted() const { return halted_; }
     const ExecResult& result() const { return result_; }
 
+    // --- instrumentation (tracers/demo) ---
+    // Fired once per executed instruction, after it runs — also inside
+    // nested CALL/CREATE frames (the arms copy it into the child clerk).
+    std::function<void(const Evm&, std::size_t pc, Byte op)> on_step;
+
     // --- inspection (tests + future tracer) ---
     std::size_t pc() const { return pc_; }
     std::size_t sp() const { return sp_; }
     Gas gas() const { return gas_; }
     const Bytes& memory() const { return memory_; }
     const Bytes& code() const { return code_; }
+    const CallContext& call() const { return call_; }
+    const Bytes& returndata() const { return returndata_; }
     const U256& peek(std::size_t i) const { return stack_[sp_ - 1 - i]; } // 0 = top
 
 private:

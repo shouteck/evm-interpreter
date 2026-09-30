@@ -81,6 +81,14 @@ public:
 // Keyed on raw limbs, so it works before U256 arithmetic exists.
 class InMemoryHost : public Host {
 public:
+    // One undo receipt — records what a write *was* so revert() can put it back.
+    struct JournalEntry {
+        enum Kind { Store, Balance, Log, Nonce, Account } kind;
+        Address addr;
+        U256    key;       // cabinet slot (Store only)
+        U256    old;       // previous value (Store/Balance); prev nonce low64 (Nonce)
+    };
+
     U256 balance(const Address& a) const override;
     U256 sload(const Address& a, const U256& key) const override;
     void sstore(const Address& a, const U256& key, const U256& value) override;
@@ -105,19 +113,14 @@ public:
     void deploy(const Address& a, Bytes code) { code_[a] = std::move(code); }
     void set_blockhash(std::uint64_t n, const U256& h) { hashes_[n] = h; }
     const std::vector<LogRecord>& logs() const { return logs_; }
+    const std::vector<JournalEntry>& journal() const { return journal_; }
+    const std::map<Address, std::map<std::array<std::uint64_t,4>,
+                                     std::array<std::uint64_t,4>>>& storage() const { return storage_; }
 
 private:
     using Limbs = std::array<std::uint64_t, 4>;
 
     static Limbs limbs_of(const U256& v) { return {v.l[0], v.l[1], v.l[2], v.l[3]}; }
-
-    // One undo receipt — records what a write *was* so revert() can put it back.
-    struct JournalEntry {
-        enum Kind { Store, Balance, Log, Nonce, Account } kind;
-        Address addr;
-        U256    key;       // cabinet slot (Store only)
-        U256    old;       // previous value (Store/Balance); prev nonce low64 (Nonce)
-    };
 
     std::map<Address, Limbs> balances_;
     std::map<Address, std::map<Limbs, Limbs>> storage_;

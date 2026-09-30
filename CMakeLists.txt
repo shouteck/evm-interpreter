@@ -40,3 +40,8 @@ add_test(NAME evm_tests COMMAND evm_tests)
 add_executable(evm_vectors tests/test_vectors.cpp)
 target_link_libraries(evm_vectors PRIVATE evm)
 target_include_directories(evm_vectors PRIVATE tests)
+
+# demo scenario runner (native build of the same shim the WASM page uses)
+add_executable(evm_scenario tools/demo/scenario.cpp)
+target_link_libraries(evm_scenario PRIVATE evm)
+target_include_directories(evm_scenario PRIVATE tests)

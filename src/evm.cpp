@@ -24,7 +24,13 @@ ExecResult Evm::run(std::size_t step_cap) {
     std::size_t cp = host_.checkpoint();   // frame-entry mark: revertable window
     const Gas initial = gas_;
     std::size_t steps = 0;
-    while (steps < step_cap && step()) ++steps;
+    while (!halted_ && steps < step_cap) {
+        std::size_t opc = pc_;                               // instr about to run
+        Byte      o   = opc < code_.size() ? code_[opc] : (Byte)op::STOP;
+        step();
+        if (on_step) on_step(*this, opc, o);                 // tracers see post-state
+        ++steps;
+    }
     if (!halted_) return result_;          // step-capped: caller decides what that means
     if (result_.reason == StopReason::Revert) {
         host_.revert(cp);                  // soft undo — gas spent, writes undone
@@ -254,6 +260,7 @@ bool Evm::step() {
             Gas fwd = std::min<Gas>((Gas)gas.low64(), gas_ - gas_/64);
             gas_ -= fwd;
             Evm kid(Bytes(host_.code(callee)), host_, std::move(child), fwd);
+            kid.on_step = on_step;                           // tracer follows the child
             ExecResult r = kid.run();
 
             // unused stamps come home
@@ -312,6 +319,7 @@ bool Evm::step() {
             Gas fwd = gas_ - gas_/64;
             gas_ -= fwd;
             Evm kid(std::move(init), host_, std::move(child), fwd);
+            kid.on_step = on_step;                           // tracer follows the child
             ExecResult r = kid.run();
             gas_ += r.gas_left;
             returndata_ = r.output;

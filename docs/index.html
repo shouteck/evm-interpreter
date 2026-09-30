@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVM Interpreter — live execution</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --edge:#30363d; --fg:#e6edf3;
+    --dim:#8b949e; --accent:#58a6ff; --good:#3fb950; --warn:#d29922; --bad:#f85149;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:28px 32px 16px; border-bottom:1px solid var(--edge); }
+  h1 { margin:0 0 6px; font-size:22px; }
+  .sub { color:var(--dim); max-width:760px; }
+  .sub a { color:var(--accent); }
+  .wrap { padding:20px 32px 48px; max-width:1200px; }
+  .scen { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 6px; }
+  .scen button {
+    background:var(--panel); color:var(--fg); border:1px solid var(--edge);
+    border-radius:6px; padding:8px 14px; cursor:pointer; font-size:13px;
+  }
+  .scen button.on { border-color:var(--accent); color:var(--accent); }
+  .scen button:hover { border-color:var(--accent); }
+  .desc { color:var(--dim); margin:4px 0 14px; min-height:20px; }
+  .controls { display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .controls button {
+    background:var(--accent); color:#081320; border:0; border-radius:6px;
+    padding:6px 14px; font-weight:600; cursor:pointer;
+  }
+  .controls button.ghost { background:var(--panel); color:var(--fg); border:1px solid var(--edge); }
+  .controls input[type=range] { width:110px; }
+  .controls .stat { color:var(--dim); font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .caption {
+    background:#1c2128; border:1px solid var(--edge); border-left:3px solid var(--accent);
+    border-radius:6px; padding:10px 14px; margin-bottom:14px; min-height:42px;
+  }
+  .caption .ev { color:var(--warn); }
+  .grid { display:grid; grid-template-columns:1.4fr 1fr; gap:14px; }
+  .panel { background:var(--panel); border:1px solid var(--edge); border-radius:8px; padding:12px 14px; }
+  .panel h3 { margin:0 0 8px; font-size:12px; color:var(--dim); text-transform:uppercase;
+              letter-spacing:.06em; font-weight:600; }
+  .wall { font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.9;
+          word-break:break-all; }
+  .wall .b { color:#79c0ff; }
+  .wall .cur { background:var(--warn); color:#000; border-radius:3px; padding:0 2px; }
+  .wall .imm { color:#565f6b; }
+  .wall .dst { color:var(--good); }
+  .framelabel { font-size:12px; color:var(--dim); margin-bottom:8px; }
+  .framelabel b { color:var(--fg); }
+  .stack { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .stack div { padding:1px 6px; border-radius:3px; }
+  .stack .top { background:#1f6feb33; color:#79c0ff; }
+  .stack .empty { color:var(--dim); }
+  .gasbar { height:8px; background:#21262d; border-radius:4px; overflow:hidden; }
+  .gasbar i { display:block; height:100%; background:var(--good); transition:width .15s; }
+  .gasbar i.low { background:var(--bad); }
+  .gasnum { font-family:ui-monospace,monospace; font-size:12px; color:var(--dim); margin-top:4px; }
+  .feed { max-height:260px; overflow:auto; font-size:12.5px; }
+  .feed div { padding:3px 0; border-bottom:1px solid #21262d; color:var(--dim); }
+  .feed div:last-child { border:0; }
+  .feed .k { color:var(--fg); }
+  .feed .rev { color:var(--bad); }
+  table.acct { width:100%; border-collapse:collapse; font-family:ui-monospace,monospace; font-size:11.5px; }
+  table.acct td, table.acct th { padding:3px 6px; text-align:left; border-bottom:1px solid #21262d; }
+  table.acct th { color:var(--dim); font-weight:600; }
+  table.acct .chg { color:var(--warn); }
+  .custom { margin-top:18px; display:flex; gap:8px; }
+  .custom input { flex:1; background:var(--panel); border:1px solid var(--edge); color:var(--fg);
+                  border-radius:6px; padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px; }
+  .custom button { background:var(--panel); color:var(--fg); border:1px solid var(--edge);
+                   border-radius:6px; padding:8px 14px; cursor:pointer; }
+  .banner { margin-top:14px; padding:10px 14px; border-radius:6px; font-weight:600; display:none; }
+  .banner.ok  { display:block; background:#3fb95022; color:var(--good); border:1px solid #3fb95055; }
+  .banner.err { display:block; background:#f8514922; color:var(--bad);  border:1px solid #f8514955; }
+  .foot { margin-top:26px; color:var(--dim); font-size:12px; }
+  code { font-family:ui-monospace,Consolas,monospace; }
+  @media (max-width:900px){ .grid{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<header>
+  <h1>EVM Interpreter — live execution</h1>
+  <div class="sub">
+    A from-scratch C++ Ethereum virtual machine, compiled to WebAssembly and running
+    <i>for real</i> in this page — hand-rolled 256-bit arithmetic, gas metering,
+    nested calls, and a journaled world state. It passes
+    <b>585/585 official Ethereum VMTests</b>.
+    <a href="https://github.com/shouteck/evm-interpreter">source on GitHub</a>
+  </div>
+</header>
+<div class="wrap">
+  <div class="scen" id="scen"></div>
+  <div class="desc" id="desc"></div>
+  <div class="controls">
+    <button id="play">▶ play</button>
+    <button class="ghost" id="step">step →</button>
+    <button class="ghost" id="nextEv">⏭ next event</button>
+    <button class="ghost" id="reset">↺ reset</button>
+    <input type="range" id="speed" min="15" max="800" value="120" title="ms per step">
+    <span class="stat" id="stat"></span>
+  </div>
+  <div class="caption" id="caption">press ▶ — or pick a story above</div>
+  <div class="grid">
+    <div class="panel">
+      <h3>the wall <span style="text-transform:none">(bytecode)</span> — <span id="who"></span></h3>
+      <div class="framelabel" id="framelabel"></div>
+      <div class="wall" id="wall"></div>
+    </div>
+    <div>
+      <div class="panel" style="margin-bottom:14px">
+        <h3>pile of slips (stack) · top first</h3>
+        <div class="stack" id="stack"><div class="empty">empty</div></div>
+      </div>
+      <div class="panel">
+        <h3>stamps (gas)</h3>
+        <div class="gasbar"><i id="gasfill"></i></div>
+        <div class="gasnum" id="gasnum"></div>
+      </div>
+    </div>
+  </div>
+  <div class="grid" style="margin-top:14px">
+    <div class="panel">
+      <h3>the receipt book &amp; bulletin board (journal / logs)</h3>
+      <div class="feed" id="feed"><div>state changes and posted notices appear here as they happen</div></div>
+    </div>
+    <div class="panel">
+      <h3>world state after execution</h3>
+      <div id="accounts"><span style="color:var(--dim)">—</span></div>
+    </div>
+  </div>
+  <div class="banner" id="banner"></div>
+  <div class="custom">
+    <input id="custom" placeholder="or paste your own bytecode, e.g. 0x600560030160005260206000f3 (5+3, returned)" spellcheck="false">
+    <button id="runcustom">run</button>
+  </div>
+  <div class="foot">
+    Mental model: each executing frame is a <i>clerk</i> in a business's office — the
+    bytecode is the wall, the stack is a pile of slips, memory is the desk, storage is
+    the filing cabinet, gas is a stamp budget. <code>CALL</code> dispatches a sub-request
+    to another business — a new clerk, same country. Every world-state write files an
+    undo receipt; a failed call tears up its receipts.
+  </div>
+</div>
+
+<script src="evm.js"></script>
+<script src="scenarios.js"></script>
+<script>
+"use strict";
+
+// ---- scenario metadata (display only — execution comes from the JSON) --------
+const NAMES = {
+  "0x00000000000000000000000000000000000000a1":"alice",
+  "0x00000000000000000000000000000000000000b0":"bob",
+  "0x0000000000000000000000000000000000007001":"token",
+  "0x0000000000000000000000000000000000007002":"logic",
+  "0x0000000000000000000000000000000000007003":"proxy",
+  "0x0000000000000000000000000000000000007004":"bank",
+  "0x0000000000000000000000000000000000007005":"attacker",
+};
+const META = {
+  arith:  { desc:"Hand-written bytecode: 5 + 3, stored on the desk, returned. Eight instructions — watch the pile." },
+  token:  { desc:"A real ERC-20 contract, compiled with solc 0.8.19. alice calls transfer(bob, 50). Watch the SHA3 mapping lookups, the cabinet writes, and the Transfer notice on the bulletin board — exactly what a wallet submits." },
+  proxy:  { desc:"The upgradeable-contract trick: alice calls inc() on the proxy. The proxy borrows the logic contract's rulebook via DELEGATECALL — but the write lands in the proxy's own cabinet (slot 1 → 1). Same address, borrowed brain. This is how USDC upgrades." },
+  dao:    { desc:"2016, The DAO: the bank sends your cash before it updates its ledger. The attacker's callback re-enters withdraw() while the books still say 'credit: 10' — watch it drain 30 for a 10 credit. This bug cost $60M and split Ethereum." },
+};
+const ORDER = ["arith","token","proxy","dao"];
+
+// ---- op -> plain-english caption ---------------------------------------------
+const CAP = {
+  PUSH:"a slip lands on the pile", POP:"a slip comes off the pile",
+  MLOAD:"reading the desk", MSTORE:"writing to the desk", MSTORE8:"writing a byte to the desk",
+  SLOAD:"checking the filing cabinet", SSTORE:"the cabinet is rewritten — a receipt is filed",
+  SHA3:"hashing a desk slice — the one-way stamp",
+  CALL:"a sub-request is dispatched — a new clerk clocks in",
+  DELEGATECALL:"borrowing another business's rulebook — but writing in OUR cabinet",
+  STATICCALL:"a read-only sub-request", CALLCODE:"borrowed wall, our office",
+  CREATE:"founding a new business — init code becomes the wall",
+  CREATE2:"founding a business at a precomputed address",
+  RETURN:"a clerk hands back a report", REVERT:"REVERT — every receipt in this window gets torn up",
+  STOP:"the clerk puts down its pen", JUMP:"the clerk picks up its finger",
+  JUMPI:"conditional hop", JUMPDEST:"a bookmark on the wall",
+  CALLDATALOAD:"reading the letter", CALLDATASIZE:"how long is the letter?",
+  CALLDATACOPY:"copying the letter onto the desk",
+  ADDRESS:"which office am I in?", CALLER:"who phoned us?", ORIGIN:"who started all this?",
+  CALLVALUE:"how much cash was stapled to the letter?",
+  GAS:"checking the stamp budget", PC:"where is the finger?", MSIZE:"how big is the desk?",
+  SELFDESTRUCT:"the business shuts its doors",
+  ADD:"adding the top two slips", SUB:"subtracting the top two slips",
+  MUL:"multiplying the top two slips", DIV:"dividing slips",
+  MOD:"remainder of the top two slips", EXP:"exponentiation",
+  LT:"is the top slip smaller?", GT:"is the top slip bigger?", EQ:"are they equal?",
+  ISZERO:"is it zero?", AND:"bitwise AND", OR:"bitwise OR", XOR:"bitwise XOR",
+  SHL:"shift left", SHR:"shift right", LOG:"a notice goes on the bulletin board",
+};
+
+// ---- state --------------------------------------------------------------------
+let Module_ = null, trace = [], cur = 0, timer = null, codeByAddr = {}, finalAccounts = [], result = null;
+let feedSeen = 0;
+
+const $ = id => document.getElementById(id);
+const short = a => NAMES[a] || a.slice(0,10)+"…";
+const shortHex = h => h.length > 18 ? h.slice(0,10)+"…"+h.slice(-6) : h;
+const dec = h => { try { return BigInt(h).toString(); } catch { return h; } };
+
+function captionFor(rec) {
+  let n = rec.name;
+  if (/^PUSH\d+$/.test(n)) n = "PUSH";
+  if (/^DUP\d+$/.test(n))  n = null, rec._cap = "duplicating a slip";
+  if (/^SWAP\d+$/.test(n)) rec._cap = "swapping two slips";
+  if (/^LOG\d$/.test(n))   n = "LOG";
+  return rec._cap || CAP[n] || n;
+}
+
+function evText(e) {
+  switch (e.t) {
+    case "sstore":  return `cabinet: ${short(e.a)} slot ${shortHex(e.k)} : ${dec(e.old)} → ${dec(e.v)}`;
+    case "balance": return `cash moves: ${short(e.a)} balance ${dec(e.old)} → ${dec(e.v)}`;
+    case "nonce":   return `nonce bump: ${short(e.a)}`;
+    case "account": return `new business registered: ${short(e.a)}`;
+    case "log":     return `notice posted by ${short(e.a)}`;
+    case "posted":  return `bulletin board: ${short(e.a)} posts ${e.topics.length} topic(s), ${(e.data.length-2)/2}B`;
+    case "revert":  return `↩ ${e.n} receipt(s) torn up — state rewound`;
+    default: return e.t;
+  }
+}
+
+// ---- rendering ----------------------------------------------------------------
+function codeOf(addr){ return codeByAddr[addr] || []; }
+
+function render(i) {
+  const rec = trace[i]; if (!rec) return;
+  const code = codeOf(rec.a);
+  const lo = Math.max(0, Math.min(rec.pc - 24, code.length - 56));
+  const hi = Math.min(code.length, lo + 56);
+  let w = "";
+  for (let b = lo; b < hi; ++b) {
+    const cls = b === rec.pc ? "cur" : "b";
+    w += `<span class="${cls}">${code[b].toString(16).padStart(2,"0")}</span> `;
+  }
+  $("wall").innerHTML = w + (hi < code.length ? "…" : "");
+  $("who").innerHTML  = `<b>${short(rec.a)}</b>  ·  clerk depth ${rec.d}  ·  pc ${rec.pc}  ·  <b>${rec.name}</b>`;
+
+  const s = rec.stack.slice(0,8).map((v,i) =>
+      `<div class="${i===0?"top":""}">${shortHex(v)}</div>`).join("");
+  $("stack").innerHTML = s || `<div class="empty">empty</div>`;
+
+  const g0 = window._gas0 || (window._gas0 = rec.gas + 1);
+  const frac = Math.max(0, Math.min(1, rec.gas / g0));
+  $("gasfill").style.width = (frac*100)+"%";
+  $("gasfill").className = frac < 0.15 ? "low" : "";
+  $("gasnum").textContent = `gas ${rec.gas.toLocaleString()}`;
+
+  $("stat").textContent = `step ${i+1}/${trace.length}`;
+  $("caption").innerHTML = captionFor(rec) +
+      (rec.ev.length ? ` <span class="ev">· ${rec.ev.map(evText).join(" · ")}</span>` : "");
+
+  // feed: append events for steps between feedSeen and i
+  while (feedSeen <= i) {
+    const r = trace[feedSeen];
+    if (r) for (const e of r.ev) {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="k">#${feedSeen}</span> ${evText(e)}`;
+      if (e.t === "revert") d.className = "rev";
+      $("feed").appendChild(d);
+    }
+    if (r && ["CALL","DELEGATECALL","STATICCALL","CREATE","CREATE2"].includes(r.name)) {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="k">#${feedSeen}</span> ${r.name} — sub-request dispatched (depth ${r.d} → ${r.d+1})`;
+      $("feed").appendChild(d);
+    }
+    feedSeen++;
+  }
+  $("feed").scrollTop = $("feed").scrollHeight;
+}
+
+function renderFinal() {
+  if (!finalAccounts.length) return;
+  let h = `<table class="acct"><tr><th>account</th><th>balance</th><th>storage ≠ 0</th></tr>`;
+  for (const a of finalAccounts) {
+    const st = a.storage.filter(x => BigInt(x.v) !== 0n)
+                        .map(x => `[${shortHex(x.k)}]=${dec(x.v)}`).join(" ");
+    h += `<tr><td>${short(a.addr)}</td><td>${dec(a.balance)}</td><td class="chg">${st}</td></tr>`;
+  }
+  $("accounts").innerHTML = h + "</table>";
+}
+
+function finish() {
+  pause();
+  if (!result) return;
+  const b = $("banner");
+  const ok = result.reason === "RETURN" || result.reason === "STOP";
+  b.className = "banner " + (ok ? "ok" : "err");
+  b.textContent = ok
+    ? `${result.reason} — output ${shortHex(result.output)} — ${result.gas_left.toLocaleString()} gas left`
+    : `${result.reason}: ${result.error} — all remaining gas burned, all writes undone`;
+  renderFinal();
+}
+
+// ---- driving -------------------------------------------------------------------
+function pause(){ if (timer) { clearInterval(timer); timer = null; } $("play").textContent = "▶ play"; }
+function play(){
+  if (timer) { pause(); return; }
+  if (cur >= trace.length - 1) load(curId);   // replay
+  $("play").textContent = "⏸ pause";
+  timer = setInterval(() => {
+    if (cur >= trace.length - 1) { finish(); return; }
+    render(++cur);
+  }, +$("speed").value);
+}
+function stepOnce(){ pause(); if (cur < trace.length-1) render(++cur); else finish(); }
+function nextEvent(){
+  pause();
+  for (let i = cur+1; i < trace.length; ++i) {
+    const r = trace[i];
+    if (r.ev.length || ["CALL","DELEGATECALL","STATICCALL","CREATE","CREATE2","RETURN","REVERT","STOP","SELFDESTRUCT"].includes(r.name)) {
+      cur = i; render(cur); return;
+    }
+  }
+  finish();
+}
+
+let curId = null;
+function load(id) {
+  pause(); curId = id; feedSeen = 0; window._gas0 = 0;
+  $("feed").innerHTML = ""; $("accounts").innerHTML = "—"; $("banner").className = "banner";
+  document.querySelectorAll(".scen button").forEach(b => b.classList.toggle("on", b.dataset.id === id));
+  $("desc").textContent = META[id] ? META[id].desc : "";
+  $("caption").textContent = "running the real interpreter…";
+  const scen = SCENARIOS[id];
+  const out = JSON.parse(Module_.ccall("evm_run_scenario", "string", ["string"], [JSON.stringify(scen)]));
+  trace = out.trace; result = out.result; finalAccounts = out.accounts || [];
+  codeByAddr = {};
+  for (const [a, acc] of Object.entries(scen.accounts || {}))
+    codeByAddr[a] = (acc.code || "0x").slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
+  if (scen.exec.code) {   // ad-hoc code override
+    codeByAddr[scen.exec.address] = scen.exec.code.slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
+  }
+  cur = 0; render(0);
+}
+
+function loadCustom() {
+  const hex = $("custom").value.trim();
+  if (!/^0x[0-9a-fA-F]*$/.test(hex) || hex.length < 4) { $("caption").textContent = "that doesn't look like bytecode (0x…)"; return; }
+  SCENARIOS.custom = {
+    title:"custom bytecode",
+    accounts:{"0x0000000000000000000000000000000000007001":{balance:"0x0",nonce:"0x0",code:"0x",storage:{}}},
+    exec:{address:"0x0000000000000000000000000000000000007001",
+          caller:"0x00000000000000000000000000000000000000a1",
+          origin:"0x00000000000000000000000000000000000000a1",
+          value:"0x0", gas:"0x30d40", gasPrice:"0x1", code:hex, data:"0x"}};
+  META.custom = { desc:"your bytecode, on the real machine" };
+  load("custom");
+}
+
+// ---- boot -----------------------------------------------------------------------
+createEvm().then(M => {
+  Module_ = M;
+  const bar = $("scen");
+  for (const id of ORDER) {
+    const b = document.createElement("button");
+    b.dataset.id = id; b.textContent = SCENARIOS[id].title;
+    b.onclick = () => load(id);
+    bar.appendChild(b);
+  }
+  $("play").onclick = play; $("step").onclick = stepOnce;
+  $("nextEv").onclick = nextEvent; $("reset").onclick = () => load(curId || "arith");
+  $("runcustom").onclick = loadCustom;
+  $("custom").addEventListener("keydown", e => { if (e.key === "Enter") loadCustom(); });
+  load("arith"); play();
+}).catch(e => { $("caption").textContent = "WASM failed to load: " + e; });
+</script>
+</body>
+</html>
