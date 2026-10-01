@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <functional>
+#include <vector>
 #include "evm/types.hpp"
 #include "evm/uint256.hpp"
 #include "evm/host.hpp"
@@ -51,7 +52,9 @@ private:
     Gas         gas_;      // stamp budget
     Gas         refund_ = 0;  // SSTORE clearings — credited back at frame end
 
-    std::array<U256, MAX_STACK> stack_;
+    std::vector<U256> stack_;    // sized MAX_STACK at construction — heap, not
+                                 // inline: 32KB per clerk is too big to nest
+                                 // Evm frames on the (64KB) wasm C stack
     std::size_t sp_ = 0;         // first empty slot; stack grows upward
     Bytes       memory_;         // the desk — grows lazily, word-aligned
     std::size_t pc_ = 0;         // next instruction

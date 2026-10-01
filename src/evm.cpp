@@ -9,7 +9,8 @@
 namespace evm {
 
 Evm::Evm(Bytes code, Host& host, CallContext call, Gas gas)
-: code_(std::move(code)), host_(host), call_(std::move(call)), gas_(gas)
+: code_(std::move(code)), host_(host), call_(std::move(call)), gas_(gas),
+  stack_(MAX_STACK)
     {
     // walk the wall once: mark real JUMPDEST positions, skip PUSH data
     jumpdests_.assign(code_.size(), false);

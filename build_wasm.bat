@@ -16,9 +16,9 @@ if not exist "%EMCC%" (
     src\uint256.cpp src\evm.cpp src\host.cpp src\opcode.cpp src\hex.cpp src\keccak.cpp ^
     tools\demo\scenario.cpp ^
     -s MODULARIZE=1 -s EXPORT_NAME=createEvm ^
-    -s ALLOW_MEMORY_GROWTH=1 ^
+    -s ALLOW_MEMORY_GROWTH=1 -s STACK_SIZE=4MB ^
     -s "EXPORTED_FUNCTIONS=['_evm_run_scenario']" ^
-    -s "EXPORTED_RUNTIME_METHODS=['ccall']" ^
+    -s "EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','HEAPU8']" ^
     -o docs\evm.js
 if errorlevel 1 exit /b 1
 echo Built docs\evm.js + docs\evm.wasm
