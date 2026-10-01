@@ -158,8 +158,8 @@
   </div>
 </div>
 
-<script src="evm.js"></script>
-<script src="scenarios.js"></script>
+<script src="evm.js?v=4"></script>
+<script src="scenarios.js?v=4"></script>
 <script>
 "use strict";
 
@@ -252,8 +252,9 @@ function evText(e) {
       // topic[0] is the event-signature hash; decode the ones we know
       const sig = EVENT_SIGS[e.topics[0]];
       if (sig === "Transfer" && e.topics.length === 3) {
-        const from = "0x" + e.topics[1].slice(-40), to = "0x" + e.topics[2].slice(-40);
-        return `bulletin board: ${short(e.a)} posts Transfer(${short(from)} → ${short(to)}, ${dec(e.data)})`;
+        // topics are minimal-hex ("0xa1"); normalize to 20-byte addresses
+        const tAddr = t => "0x" + t.slice(2).padStart(40, "0").slice(-40);
+        return `bulletin board: ${short(e.a)} posts Transfer(${short(tAddr(e.topics[1]))} → ${short(tAddr(e.topics[2]))}, ${dec(e.data)})`;
       }
       return `bulletin board: ${short(e.a)} posts ${sig || "an event"} (${e.topics.length} topic(s), ${(e.data.length-2)/2}B)`;
     }
@@ -417,7 +418,9 @@ function loadCustom() {
 }
 
 // ---- boot -----------------------------------------------------------------------
-createEvm().then(M => {
+// locateFile versions the wasm URL too — Pages caches .wasm aggressively
+// and a stale engine + fresh page produced a corrupt-looking demo before
+createEvm({locateFile: f => f + "?v=4"}).then(M => {
   Module_ = M;
   const bar = $("scen");
   for (const id of ORDER) {
