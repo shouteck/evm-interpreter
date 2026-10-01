@@ -102,7 +102,6 @@
   <div class="controls">
     <button id="play">▶ play</button>
     <button class="ghost" id="step">step →</button>
-    <button class="ghost" id="nextEv">⏭ next event</button>
     <button class="ghost" id="reset">↺ reset</button>
     <span class="stat">speed</span>
     <input type="range" id="speed" min="2" max="60" value="12" title="steps per second">
@@ -366,16 +365,6 @@ function play(){
   }, 1000 / +$("speed").value);
 }
 function stepOnce(){ pause(); if (cur < trace.length-1) render(++cur); else finish(); }
-function nextEvent(){
-  pause();
-  for (let i = cur+1; i < trace.length; ++i) {
-    const r = trace[i];
-    if (r.ev.length || ["CALL","DELEGATECALL","STATICCALL","CREATE","CREATE2","RETURN","REVERT","STOP","SELFDESTRUCT"].includes(r.name)) {
-      cur = i; render(cur); return;
-    }
-  }
-  finish();
-}
 
 let curId = null;
 function load(id) {
@@ -430,7 +419,7 @@ createEvm({locateFile: f => f + "?v=4"}).then(M => {
     bar.appendChild(b);
   }
   $("play").onclick = play; $("step").onclick = stepOnce;
-  $("nextEv").onclick = nextEvent; $("reset").onclick = () => load(curId || "arith");
+  $("reset").onclick = () => load(curId || "arith");
   $("runcustom").onclick = loadCustom;
   $("custom").addEventListener("keydown", e => { if (e.key === "Enter") loadCustom(); });
   $("speed").oninput = e => {
