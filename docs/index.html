@@ -157,8 +157,8 @@
   </div>
 </div>
 
-<script src="evm.js?v=4"></script>
-<script src="scenarios.js?v=4"></script>
+<script src="evm.js?v=5"></script>
+<script src="scenarios.js?v=5"></script>
 <script>
 "use strict";
 
@@ -209,8 +209,8 @@ const CAP = {
 };
 
 // ---- state --------------------------------------------------------------------
-let Module_ = null, trace = [], cur = 0, timer = null, codeByAddr = {}, finalAccounts = [], result = null;
-let feedSeen = 0, SLOTS = {}, INITIAL = [], DESTS = {};
+let Module_ = null, trace = [], cur = 0, timer = null, codeByIdx = [], finalAccounts = [], result = null;
+let feedSeen = 0, SLOTS = {}, INITIAL = [], DESTS = [], CODE_OWNER = {};
 // keccak("Transfer(address,address,uint256)") — the ERC-20 event topic[0]
 const EVENT_SIGS = {
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef": "Transfer"
@@ -263,11 +263,13 @@ function evText(e) {
 }
 
 // ---- rendering ----------------------------------------------------------------
-function codeOf(addr){ return codeByAddr[addr] || []; }
+// rec.c indexes into out.codes — the wall actually executing, which during a
+// DELEGATECALL is *another business's* code running in this office
+function codeOf(rec){ return codeByIdx[rec.c] || []; }
 
 function render(i) {
   const rec = trace[i]; if (!rec) return;
-  const code = codeOf(rec.a);
+  const code = codeOf(rec);
   // PUSHn eats the next n bytes as data — show exactly which ones
   const pm = rec.name.match(/^PUSH(\d+)$/);
   const immEnd = pm ? rec.pc + 1 + (+pm[1]) : -1;
@@ -277,11 +279,13 @@ function render(i) {
   for (let b = lo; b < hi; ++b) {
     const cls = b === rec.pc ? "cur"
               : (b > rec.pc && b < immEnd) ? "imm"
-              : (DESTS[rec.a] && DESTS[rec.a].has(b)) ? "dst" : "b";
+              : (DESTS[rec.c] && DESTS[rec.c].has(b)) ? "dst" : "b";
     w += `<span class="${cls}">${code[b].toString(16).padStart(2,"0")}</span> `;
   }
   $("wall").innerHTML = w + (hi < code.length ? "…" : "");
-  $("who").innerHTML  = `<b>${short(rec.a)}</b>  ·  clerk depth ${rec.d}  ·  pc ${rec.pc}  ·  <b>${rec.name}</b>`;
+  const owner = CODE_OWNER[rec.c];
+  const wallNote = owner && owner !== rec.a ? ` running <b>${short(owner)}</b>'s wall` : "";
+  $("who").innerHTML  = `<b>${short(rec.a)}</b>${wallNote}  ·  clerk depth ${rec.d}  ·  pc ${rec.pc}  ·  <b>${rec.name}</b>`;
   $("framelabel").textContent = rec.d > 0
     ? `▸ inside a sub-request — this clerk's failure tears up only its own receipts`
     : "";
@@ -309,9 +313,16 @@ function render(i) {
       if (e.t === "revert") d.className = "rev";
       $("feed").appendChild(d);
     }
-    if (r && ["CALL","DELEGATECALL","STATICCALL","CREATE","CREATE2"].includes(r.name)) {
+    // depth transitions are chronological — a child's records precede the
+    // parent's CALL record, so the dispatch line belongs on the frame change
+    if (r && feedSeen > 0 && r.d > trace[feedSeen-1].d) {
       const d = document.createElement("div");
-      d.innerHTML = `<span class="k">#${feedSeen}</span> ${r.name} — sub-request dispatched (depth ${r.d} → ${r.d+1})`;
+      d.innerHTML = `<span class="k">#${feedSeen}</span> sub-request dispatched (depth ${r.d-1} → ${r.d})`;
+      $("feed").appendChild(d);
+    }
+    if (r && feedSeen > 0 && r.d < trace[feedSeen-1].d) {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="k">#${feedSeen}</span> clerk returned (depth ${trace[feedSeen-1].d} → ${r.d})`;
       $("feed").appendChild(d);
     }
     feedSeen++;
@@ -377,14 +388,16 @@ function load(id) {
   const out = JSON.parse(Module_.ccall("evm_run_scenario", "string", ["string"], [JSON.stringify(scen)]));
   trace = out.trace; result = out.result; finalAccounts = out.accounts || [];
   SLOTS = out.slots || {}; INITIAL = out.initial || [];
-  codeByAddr = {}; DESTS = {};
-  for (const [a, acc] of Object.entries(scen.accounts || {})) {
-    codeByAddr[a] = (acc.code || "0x").slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
-    DESTS[a] = jumpdests(codeByAddr[a]);
-  }
-  if (scen.exec.code) {   // ad-hoc code override
-    codeByAddr[scen.exec.address] = scen.exec.code.slice(2).match(/../g)?.map(h => parseInt(h,16)) || [];
-    DESTS[scen.exec.address] = jumpdests(codeByAddr[scen.exec.address]);
+  // walls that actually ran (deduped by the engine) + who owns each
+  const hexBytes = h => h.slice(2).match(/../g)?.map(x => parseInt(x,16)) || [];
+  codeByIdx = (out.codes || []).map(hexBytes);
+  DESTS = codeByIdx.map(jumpdests);
+  CODE_OWNER = {};
+  const ownerSrc = {...(scen.accounts || {})};
+  if (scen.exec.code) ownerSrc[scen.exec.address] = {code: scen.exec.code};
+  for (const [a, acc] of Object.entries(ownerSrc)) {
+    const i = (out.codes || []).indexOf(acc.code);
+    if (i >= 0) CODE_OWNER[i] = a;
   }
   $("letter").innerHTML = scen.calldata_desc
     ? `the letter: <b>${scen.calldata_desc}</b> <span style="color:var(--dim)">${(scen.exec.data||"0x").slice(0,74)}${(scen.exec.data||"").length>76?"…":""}</span>`
@@ -409,7 +422,7 @@ function loadCustom() {
 // ---- boot -----------------------------------------------------------------------
 // locateFile versions the wasm URL too — Pages caches .wasm aggressively
 // and a stale engine + fresh page produced a corrupt-looking demo before
-createEvm({locateFile: f => f + "?v=4"}).then(M => {
+createEvm({locateFile: f => f + "?v=5"}).then(M => {
   Module_ = M;
   const bar = $("scen");
   for (const id of ORDER) {

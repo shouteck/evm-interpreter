@@ -15,7 +15,8 @@
 - Demo scenario JSON: `build\evm_scenario.exe tools\demo\scenarios\<name>.json`
 - WASM demo: `build_wasm.bat` (emsdk at `%USERPROFILE%\emsdk`; node/python paths pinned inside) → `docs/evm.js` + `docs/evm.wasm`
 - After rebuilding wasm, bump the `?v=N` query in `docs/index.html` (script tags + `locateFile`) — Pages caches `.wasm` aggressively and stale engine + fresh page = corrupt-looking demo
-- solc for demo contracts: 0.8.19, `--evm-version paris` (no PUSH0; Frontier ISA) — `tools/demo/contracts.sol`
+- solc for demo contracts: 0.8.19 (at `%TEMP%\solc.exe`), `--bin-runtime --evm-version paris` (no PUSH0; Frontier ISA) — `tools/demo/contracts.sol`
+- Recompiling → `tools/demo/*.bin-runtime` → hand-copy hex into `tools/demo/scenarios/*.json` → regen `docs/scenarios.js` (concat the JSONs into `const SCENARIOS = {...}`) → bump `?v=` in `docs/index.html`. Skipping the JSON step leaves stale bytecode (happened once — Logic ran with count at slot 0 and demoed the storage-collision bug by accident).
 - The gas schedule is Frontier (SLOAD 50, CALL 40, SELFDESTRUCT 0) — that's what the legacy corpus encodes. Changing it will fail fixtures.
 
 ## Conventions

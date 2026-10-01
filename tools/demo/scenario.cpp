@@ -218,13 +218,21 @@ std::string run_scenario_json(const std::string& input) {
     }
     init << "]";
 
+    // dedup the walls being executed — a delegatecall frame runs *another*
+    // business's wall, so records carry a code id, not just the office address
+    std::vector<Bytes> code_blobs;
+    std::map<Bytes, int>  code_ids;
+
     Evm vm(std::move(code), host, c, to_gas(x["gas"].s));
     vm.on_step = [&](const Evm& f, std::size_t opc, Byte o) {
+        auto [cit, newcode] = code_ids.try_emplace(f.code(), (int)code_blobs.size());
+        if (newcode) code_blobs.push_back(f.code());
         if (!first) tr << ",";
         first = false;
         tr << "{\"d\":" << f.call().depth
            << ",\"a\":\"" << hex_addr(f.call().address)
-           << "\",\"pc\":" << opc
+           << "\",\"c\":" << cit->second
+           << ",\"pc\":" << opc
            << ",\"op\":" << (unsigned)o
            << ",\"name\":\"" << opcode_name(o)
            << "\",\"gas\":" << f.gas()
@@ -249,6 +257,14 @@ std::string run_scenario_json(const std::string& input) {
         << "\",\"error\":\"" << to_string(r.error)
         << "\",\"gas_left\":" << r.gas_left
         << ",\"output\":\"" << to_hex(r.output) << "\"}";
+
+    // every distinct wall that executed, in first-seen order
+    out << ",\"codes\":[";
+    for (std::size_t i = 0; i < code_blobs.size(); ++i) {
+        if (i) out << ",";
+        out << "\"" << to_hex(code_blobs[i]) << "\"";
+    }
+    out << "]";
 
     // union of scenario accounts + every address the journal touched
     for (auto& e : host.journal()) known.insert(e.addr);
