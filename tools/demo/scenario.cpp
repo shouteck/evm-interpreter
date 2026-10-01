@@ -146,6 +146,9 @@ std::string run_scenario_json(const std::string& input) {
         if (j.size() > pj) {
             for (std::size_t i = pj; i < j.size(); ++i) {
                 auto& e = j[i];
+                // a LOG files a journal receipt AND lands on the bulletin
+                // board — render it once, via the "posted" event below
+                if (e.kind == InMemoryHost::JournalEntry::Log) continue;
                 if (!ef) ev << ",";
                 ef = false;
                 switch (e.kind) {
@@ -161,8 +164,7 @@ std::string run_scenario_json(const std::string& input) {
                        << "\",\"v\":\"" << hex_u(h.balance(e.addr)) << "\"}";
                     break;
                 case InMemoryHost::JournalEntry::Log:
-                    ev << "{\"t\":\"log\",\"a\":\"" << hex_addr(e.addr) << "\"}";
-                    break;
+                    break;  // unreachable — filtered above
                 case InMemoryHost::JournalEntry::Nonce:
                     ev << "{\"t\":\"nonce\",\"a\":\"" << hex_addr(e.addr) << "\"}";
                     break;

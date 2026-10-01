@@ -212,6 +212,10 @@ const CAP = {
 // ---- state --------------------------------------------------------------------
 let Module_ = null, trace = [], cur = 0, timer = null, codeByAddr = {}, finalAccounts = [], result = null;
 let feedSeen = 0, SLOTS = {}, INITIAL = [], DESTS = {};
+// keccak("Transfer(address,address,uint256)") — the ERC-20 event topic[0]
+const EVENT_SIGS = {
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef": "Transfer"
+};
 
 const $ = id => document.getElementById(id);
 const short = a => NAMES[a] || a.slice(0,10)+"…";
@@ -244,8 +248,15 @@ function evText(e) {
     case "balance": return `cash moves: ${short(e.a)} balance ${dec(e.old)} → ${dec(e.v)}`;
     case "nonce":   return `nonce bump: ${short(e.a)}`;
     case "account": return `new business registered: ${short(e.a)}`;
-    case "log":     return `notice posted by ${short(e.a)}`;
-    case "posted":  return `bulletin board: ${short(e.a)} posts ${e.topics.length} topic(s), ${(e.data.length-2)/2}B`;
+    case "posted": {
+      // topic[0] is the event-signature hash; decode the ones we know
+      const sig = EVENT_SIGS[e.topics[0]];
+      if (sig === "Transfer" && e.topics.length === 3) {
+        const from = "0x" + e.topics[1].slice(-40), to = "0x" + e.topics[2].slice(-40);
+        return `bulletin board: ${short(e.a)} posts Transfer(${short(from)} → ${short(to)}, ${dec(e.data)})`;
+      }
+      return `bulletin board: ${short(e.a)} posts ${sig || "an event"} (${e.topics.length} topic(s), ${(e.data.length-2)/2}B)`;
+    }
     case "revert":  return `↩ ${e.n} receipt(s) torn up — state rewound`;
     default: return e.t;
   }
